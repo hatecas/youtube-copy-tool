@@ -1,14 +1,34 @@
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000";
-
-export async function analyzeVideos(videoUrls: string[]): Promise<any> {
-  const res = await fetch(`${BACKEND_URL}/api/analyze`, {
+export async function analyzeVideos(videoUrls: string[]) {
+  const res = await fetch("/api/analyze", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ video_urls: videoUrls }),
   });
 
   if (!res.ok) {
-    throw new Error(`분석 실패: ${res.statusText}`);
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `분석 실패: ${res.statusText}`);
+  }
+
+  return res.json();
+}
+
+export async function retryTopics(
+  analysisId: string,
+  previousTopics: { topic: string }[]
+) {
+  const res = await fetch("/api/retry-topics", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      analysis_id: analysisId,
+      previous_topics: previousTopics,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `재추천 실패: ${res.statusText}`);
   }
 
   return res.json();
@@ -17,8 +37,8 @@ export async function analyzeVideos(videoUrls: string[]): Promise<any> {
 export async function generateContent(
   analysisId: string,
   selectedTopicId: string
-): Promise<any> {
-  const res = await fetch(`${BACKEND_URL}/api/generate`, {
+) {
+  const res = await fetch("/api/generate", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -28,14 +48,15 @@ export async function generateContent(
   });
 
   if (!res.ok) {
-    throw new Error(`생성 실패: ${res.statusText}`);
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `생성 실패: ${res.statusText}`);
   }
 
   return res.json();
 }
 
-export async function getProjectStatus(projectId: string): Promise<any> {
-  const res = await fetch(`${BACKEND_URL}/api/project/${projectId}`);
+export async function getProjectStatus(projectId: string) {
+  const res = await fetch(`/api/project/${projectId}`);
 
   if (!res.ok) {
     throw new Error(`조회 실패: ${res.statusText}`);
@@ -60,9 +81,9 @@ export function extractVideoId(url: string): string | null {
   return null;
 }
 
-// YouTube 썸네일 URL 가져오기
+// YouTube 썸네일 URL 가져오기 (hqdefault는 모든 영상에 존재)
 export function getThumbnailUrl(videoId: string): string {
-  return `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
+  return `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
 }
 
 // 조회수 포맷
