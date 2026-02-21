@@ -124,7 +124,7 @@ def get_video_info(video_id: str) -> dict:
         return {
             "id": video_id,
             "title": f"영상 ({video_id})",
-            "thumbnail": f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg",
+            "thumbnail": f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg",
             "channelName": "채널명",
             "viewCount": 0,
             "publishedAt": datetime.now().isoformat(),
@@ -152,7 +152,7 @@ def get_video_info(video_id: str) -> dict:
         return {
             "id": video_id,
             "title": snippet.get("title", ""),
-            "thumbnail": f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg",
+            "thumbnail": f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg",
             "channelName": snippet.get("channelTitle", ""),
             "viewCount": int(stats.get("viewCount", 0)),
             "publishedAt": snippet.get("publishedAt", ""),
@@ -164,7 +164,7 @@ def get_video_info(video_id: str) -> dict:
         return {
             "id": video_id,
             "title": f"영상 ({video_id})",
-            "thumbnail": f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg",
+            "thumbnail": f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg",
             "channelName": "채널명",
             "viewCount": 0,
             "publishedAt": datetime.now().isoformat(),

@@ -83,9 +83,9 @@ export function extractVideoId(url: string): string | null {
   return null;
 }
 
-// YouTube 썸네일 URL 가져오기
+// YouTube 썸네일 URL 가져오기 (hqdefault는 모든 영상에 존재)
 export function getThumbnailUrl(videoId: string): string {
-  return `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
+  return `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
 }
 
 // 조회수 포맷
