@@ -35,15 +35,15 @@ export default function AnalysisStep({ videoUrls, isGenerating }: AnalysisStepPr
 
   return (
     <div className="animate-fade-in-up">
-      <div className="text-center mb-12">
-        <div className="inline-flex items-center gap-2 badge badge-accent mb-4">
+      <div className="text-center mb-8 sm:mb-12">
+        <div className="inline-flex items-center gap-2 badge badge-accent mb-3 sm:mb-4">
           <Loader2 size={12} className="animate-spin" />
           {isGenerating ? "생성중" : "분석중"}
         </div>
-        <h2 className="text-3xl font-bold mb-3 tracking-tight">
+        <h2 className="text-2xl sm:text-3xl font-bold mb-2 sm:mb-3 tracking-tight">
           {isGenerating ? "콘텐츠를 생성하고 있어요" : "영상을 분석하고 있어요"}
         </h2>
-        <p className="text-text-secondary">
+        <p className="text-sm sm:text-base text-text-secondary px-2">
           {isGenerating
             ? "AI가 레퍼런스를 참고하여 고품질 콘텐츠를 만들고 있습니다"
             : `${videoUrls.length}개 영상의 제목, 조회수, 대본을 수집하고 AI가 분석 중입니다`}
@@ -52,12 +52,12 @@ export default function AnalysisStep({ videoUrls, isGenerating }: AnalysisStepPr
 
       {/* Loading animation */}
       <div className="max-w-lg mx-auto">
-        <div className="card p-8">
+        <div className="card p-5 sm:p-8">
           {/* Spinner */}
-          <div className="flex justify-center mb-8">
+          <div className="flex justify-center mb-6 sm:mb-8">
             <div className="relative">
-              <div className="w-20 h-20 rounded-2xl bg-accent/5 border border-accent/20 flex items-center justify-center">
-                <Loader2 size={28} className="text-accent animate-spin" />
+              <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-accent/5 border border-accent/20 flex items-center justify-center">
+                <Loader2 size={24} className="text-accent animate-spin sm:w-[28px] sm:h-[28px]" />
               </div>
               <div className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-accent animate-ping" />
             </div>
@@ -74,7 +74,7 @@ export default function AnalysisStep({ videoUrls, isGenerating }: AnalysisStepPr
                 <div
                   key={i}
                   className={`
-                    flex items-center gap-3 p-4 rounded-xl transition-all duration-500
+                    flex items-center gap-2.5 sm:gap-3 p-3 sm:p-4 rounded-xl transition-all duration-500
                     ${isActive ? "bg-accent/5 border border-accent/10" : ""}
                     ${isDone ? "bg-success/5 border border-success/10" : ""}
                     ${!isActive && !isDone ? "opacity-30" : ""}
@@ -98,7 +98,7 @@ export default function AnalysisStep({ videoUrls, isGenerating }: AnalysisStepPr
                     )}
                   </div>
                   <span
-                    className={`text-sm ${
+                    className={`text-xs sm:text-sm ${
                       isDone
                         ? "text-success"
                         : isActive
@@ -114,7 +114,7 @@ export default function AnalysisStep({ videoUrls, isGenerating }: AnalysisStepPr
           </div>
         </div>
 
-        <p className="text-center text-sm text-text-muted mt-6">
+        <p className="text-center text-xs sm:text-sm text-text-muted mt-4 sm:mt-6">
           {isGenerating
             ? "대본 생성에 30초~1분 정도 소요됩니다"
             : "영상 수집 + AI 분석에 30초~1분 정도 소요됩니다"}

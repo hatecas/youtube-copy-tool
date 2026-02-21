@@ -117,7 +117,7 @@ export default function Home() {
     <div className="min-h-screen">
       <Header onReset={handleReset} />
 
-      <main className="max-w-6xl mx-auto px-6 pb-20">
+      <main className="max-w-6xl mx-auto px-4 sm:px-6 pb-12 sm:pb-20">
         <StepIndicator currentStep={currentStep} />
 
         {/* 에러 배너 */}

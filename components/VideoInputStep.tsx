@@ -58,17 +58,17 @@ export default function VideoInputStep({ onSubmit }: VideoInputStepProps) {
   return (
     <div className="animate-fade-in-up">
       {/* Hero */}
-      <div className="text-center mb-10">
-        <div className="inline-flex items-center gap-2 badge badge-accent mb-4">
+      <div className="text-center mb-6 sm:mb-10">
+        <div className="inline-flex items-center gap-2 badge badge-accent mb-3 sm:mb-4">
           <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
           STEP 1
         </div>
-        <h2 className="text-3xl font-bold mb-3 tracking-tight">
+        <h2 className="text-2xl sm:text-3xl font-bold mb-2 sm:mb-3 tracking-tight">
           레퍼런스 영상을 입력하세요
         </h2>
-        <p className="text-text-secondary text-base max-w-lg mx-auto">
+        <p className="text-text-secondary text-sm sm:text-base max-w-lg mx-auto px-2">
           카피하고 싶은 유튜브 영상 링크를 최소 3개 이상 입력해주세요.
-          <br />
+          <br className="hidden sm:block" />
           조회수가 높은 영상부터 자동으로 분석합니다.
         </p>
       </div>
@@ -84,14 +84,14 @@ export default function VideoInputStep({ onSubmit }: VideoInputStepProps) {
             <div
               key={index}
               className={`
-                card p-4 flex items-center gap-4
+                card p-3 sm:p-4 flex items-center gap-2 sm:gap-4
                 animate-fade-in-up stagger-${Math.min(index + 1, 5)}
                 ${isValid ? "border-success/30" : ""}
                 ${hasError ? "border-red-500/50" : ""}
               `}
             >
               {/* Thumbnail preview */}
-              <div className="w-20 h-12 rounded-lg overflow-hidden flex-shrink-0 bg-bg-secondary">
+              <div className="w-14 h-10 sm:w-20 sm:h-12 rounded-lg overflow-hidden flex-shrink-0 bg-bg-secondary">
                 {isValid ? (
                   <img
                     src={getThumbnailUrl(videoId!)}
@@ -103,20 +103,20 @@ export default function VideoInputStep({ onSubmit }: VideoInputStepProps) {
                   />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center">
-                    <Link2 size={16} className="text-text-muted" />
+                    <Link2 size={14} className="text-text-muted sm:w-[16px] sm:h-[16px]" />
                   </div>
                 )}
               </div>
 
               {/* Input */}
-              <div className="flex-1 relative">
+              <div className="flex-1 min-w-0 relative">
                 <input
                   type="text"
                   value={url}
                   onChange={(e) => updateUrl(index, e.target.value)}
-                  placeholder={`영상 ${index + 1} URL (예: https://youtube.com/watch?v=...)`}
+                  placeholder={`영상 ${index + 1} URL`}
                   className={`
-                    input-field pr-10
+                    input-field pr-10 text-sm sm:text-[15px]
                     ${hasError ? "border-red-500/50 focus:border-red-500" : ""}
                   `}
                 />
@@ -147,7 +147,7 @@ export default function VideoInputStep({ onSubmit }: VideoInputStepProps) {
               {urls.length > 3 && (
                 <button
                   onClick={() => removeUrl(index)}
-                  className="p-2 text-text-muted hover:text-red-400 transition-colors"
+                  className="p-2 text-text-muted hover:text-red-400 transition-colors flex-shrink-0"
                 >
                   <Trash2 size={16} />
                 </button>
@@ -158,7 +158,7 @@ export default function VideoInputStep({ onSubmit }: VideoInputStepProps) {
       </div>
 
       {/* Add more */}
-      <div className="max-w-2xl mx-auto mb-8">
+      <div className="max-w-2xl mx-auto mb-6 sm:mb-8">
         <button
           onClick={addUrl}
           disabled={urls.length >= 10}
@@ -181,7 +181,7 @@ export default function VideoInputStep({ onSubmit }: VideoInputStepProps) {
 
       {/* Submit */}
       <div className="max-w-2xl mx-auto flex items-center justify-between">
-        <p className="text-sm text-text-muted">
+        <p className="text-xs sm:text-sm text-text-muted">
           <span className={validCount >= 3 ? "text-success font-semibold" : ""}>
             {validCount}
           </span>
@@ -190,7 +190,7 @@ export default function VideoInputStep({ onSubmit }: VideoInputStepProps) {
         <button
           onClick={validateAndSubmit}
           disabled={validCount < 3}
-          className="btn-primary flex items-center gap-2"
+          className="btn-primary flex items-center gap-2 text-sm sm:text-[15px]"
         >
           분석 시작
           <ArrowRight size={16} />
