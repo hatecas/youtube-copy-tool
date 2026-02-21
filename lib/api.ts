@@ -1,6 +1,6 @@
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000";
 
-export async function analyzeVideos(videoUrls: string[]): Promise<any> {
+export async function analyzeVideos(videoUrls: string[]) {
   const res = await fetch(`${BACKEND_URL}/api/analyze`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -8,7 +8,29 @@ export async function analyzeVideos(videoUrls: string[]): Promise<any> {
   });
 
   if (!res.ok) {
-    throw new Error(`분석 실패: ${res.statusText}`);
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `분석 실패: ${res.statusText}`);
+  }
+
+  return res.json();
+}
+
+export async function retryTopics(
+  analysisId: string,
+  previousTopics: { topic: string }[]
+) {
+  const res = await fetch(`${BACKEND_URL}/api/retry-topics`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      analysis_id: analysisId,
+      previous_topics: previousTopics,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `재추천 실패: ${res.statusText}`);
   }
 
   return res.json();
@@ -17,7 +39,7 @@ export async function analyzeVideos(videoUrls: string[]): Promise<any> {
 export async function generateContent(
   analysisId: string,
   selectedTopicId: string
-): Promise<any> {
+) {
   const res = await fetch(`${BACKEND_URL}/api/generate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -28,13 +50,14 @@ export async function generateContent(
   });
 
   if (!res.ok) {
-    throw new Error(`생성 실패: ${res.statusText}`);
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `생성 실패: ${res.statusText}`);
   }
 
   return res.json();
 }
 
-export async function getProjectStatus(projectId: string): Promise<any> {
+export async function getProjectStatus(projectId: string) {
   const res = await fetch(`${BACKEND_URL}/api/project/${projectId}`);
 
   if (!res.ok) {

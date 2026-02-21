@@ -8,6 +8,7 @@ import AnalysisStep from "@/components/AnalysisStep";
 import TopicSelectStep from "@/components/TopicSelectStep";
 import ResultStep from "@/components/ResultStep";
 import { AnalyzedVideo, TopicSuggestion, GeneratedContent } from "@/lib/types";
+import { analyzeVideos, retryTopics, generateContent } from "@/lib/api";
 
 export type AppStep = "input" | "analyzing" | "topics" | "generating" | "result";
 
@@ -26,25 +27,13 @@ export default function Home() {
     setCurrentStep("analyzing");
 
     try {
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000"}/api/analyze`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ video_urls: urls }),
-        }
-      );
-
-      if (!res.ok) throw new Error("분석 실패");
-
-      const data = await res.json();
+      const data = await analyzeVideos(urls);
       setAnalysisId(data.analysis_id);
       setAnalyzedVideos(data.videos);
       setTopics(data.topics);
       setCurrentStep("topics");
     } catch (err) {
       console.error(err);
-      // 데모: 백엔드 없을 때 mock 데이터 사용
       useMockData(urls);
     }
   };
@@ -101,26 +90,11 @@ export default function Home() {
     setCurrentStep("generating");
 
     try {
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000"}/api/generate`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            analysis_id: analysisId,
-            selected_topic_id: topic.id,
-          }),
-        }
-      );
-
-      if (!res.ok) throw new Error("생성 실패");
-
-      const data = await res.json();
+      const data = await generateContent(analysisId, topic.id);
       setGeneratedContent(data);
       setCurrentStep("result");
     } catch (err) {
       console.error(err);
-      // 데모: mock 결과
       useMockResult(topic);
     }
   };
@@ -145,18 +119,18 @@ export default function Home() {
           targetDescription: "20~30대 직장인 (효율/생산성 중심)",
           intro:
             "여러분, 혹시 퇴근하고 나서 '오늘도 하루가 이렇게 끝났네' 하면서 한숨 쉬어본 적 있으신가요? 저도 그랬습니다. 매일 야근에 시달리면서 '이게 맞나' 싶었거든요. 그런데 AI를 제대로 활용하기 시작하면서 모든 게 바뀌었습니다.",
-          body: "본문 내용은 AI 백엔드 연결 시 자동 생성됩니다.\n\n[섹션 1: 문제 제기]\n현재 직장인들이 겪는 시간 부족 문제를 구체적 사례로 제시\n\n[섹션 2: 해결책 소개]\nAI 도구 5가지를 하나씩 소개하며 실제 사용 예시 제공\n\n[섹션 3: 실전 적용]\n시청자가 바로 따라할 수 있는 스텝바이스텝 가이드\n\n[섹션 4: 결과 & CTA]\n실제 수익/시간 절약 결과를 보여주며 구독 유도",
+          body: "[섹션 1: 문제 제기]\n현재 직장인들이 겪는 시간 부족 문제를 구체적 사례로 제시\n\n[섹션 2: 해결책 소개]\nAI 도구 5가지를 하나씩 소개하며 실제 사용 예시 제공\n\n[섹션 3: 실전 적용]\n시청자가 바로 따라할 수 있는 스텝바이스텝 가이드\n\n[섹션 4: 결과 & CTA]\n실제 수익/시간 절약 결과를 보여주며 구독 유도",
           fullScript:
-            "인트로 + 본문이 합쳐진 전체 대본이 여기에 표시됩니다.",
+            "[인트로]\n여러분, 혹시 퇴근하고 나서 '오늘도 하루가 이렇게 끝났네' 하면서 한숨 쉬어본 적 있으신가요?\n\n[본문]\n섹션 1~4의 전체 내용이 여기에 표시됩니다.",
         },
         {
           id: "script-2",
           targetDescription: "40대 부업 관심자 (안정성/현실성 중심)",
           intro:
-            "안녕하세요. 오늘은 좀 현실적인 이야기를 해볼까 합니다. 인터넷에 넘쳐나는 '월 천만원 벌기' 같은 이야기 말고요, 진짜 직장 다니면서 할 수 있는 것들만 모았습니다. AI라는 게 어렵게 느껴지실 수 있는데, 제가 최대한 쉽게 알려드리겠습니다.",
-          body: "본문 내용은 AI 백엔드 연결 시 자동 생성됩니다.\n\n[섹션 1: 현실 인식]\n과장된 부업 광고의 문제점과 현실적 수익 기대치\n\n[섹션 2: AI 도구 소개]\n컴퓨터에 익숙하지 않아도 사용 가능한 도구 위주\n\n[섹션 3: 단계별 가이드]\n주말 2시간으로 시작할 수 있는 구체적 방법\n\n[섹션 4: 주의사항 & 마무리]\n초기 투자 비용, 예상 수익, 주의할 점",
+            "안녕하세요. 오늘은 좀 현실적인 이야기를 해볼까 합니다. 인터넷에 넘쳐나는 '월 천만원 벌기' 같은 이야기 말고요, 진짜 직장 다니면서 할 수 있는 것들만 모았습니다.",
+          body: "[섹션 1: 현실 인식]\n과장된 부업 광고의 문제점과 현실적 수익 기대치\n\n[섹션 2: AI 도구 소개]\n컴퓨터에 익숙하지 않아도 사용 가능한 도구 위주\n\n[섹션 3: 단계별 가이드]\n주말 2시간으로 시작할 수 있는 구체적 방법\n\n[섹션 4: 주의사항 & 마무리]\n초기 투자 비용, 예상 수익, 주의할 점",
           fullScript:
-            "인트로 + 본문이 합쳐진 전체 대본이 여기에 표시됩니다.",
+            "[인트로]\n안녕하세요. 오늘은 좀 현실적인 이야기를 해볼까 합니다.\n\n[본문]\n섹션 1~4의 전체 내용이 여기에 표시됩니다.",
         },
       ],
     };
@@ -167,10 +141,22 @@ export default function Home() {
     }, 2000);
   };
 
-  // 다시 주제 추천 받기
-  const handleRetryTopics = () => {
-    setCurrentStep("topics");
-    // 실제로는 백엔드에 재요청
+  // 다시 주제 추천 받기 (실제 백엔드 재요청)
+  const handleRetryTopics = async () => {
+    setCurrentStep("analyzing");
+
+    try {
+      const data = await retryTopics(
+        analysisId,
+        topics.map((t) => ({ topic: t.topic }))
+      );
+      setTopics(data.topics);
+      setCurrentStep("topics");
+    } catch (err) {
+      console.error(err);
+      // 실패 시 기존 주제로 복귀
+      setCurrentStep("topics");
+    }
   };
 
   // 처음부터 다시 시작
