@@ -14,11 +14,7 @@ const steps = [
   { key: "result", label: "결과물", icon: FileText },
 ];
 
-const stepOrder = ["input", "analyzing", "topics", "generating", "result"];
-
 export default function StepIndicator({ currentStep }: StepIndicatorProps) {
-  const currentIndex = stepOrder.indexOf(currentStep);
-
   const getStepStatus = (stepKey: string) => {
     const displaySteps = ["input", "analyzing", "topics", "result"];
     const stepIdx = displaySteps.indexOf(stepKey);

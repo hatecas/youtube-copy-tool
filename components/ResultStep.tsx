@@ -23,7 +23,7 @@ interface ResultStepProps {
   onBack: () => void;
 }
 
-export default function ResultStep({ content, videos, onReset, onBack }: ResultStepProps) {
+export default function ResultStep({ content, onReset, onBack }: ResultStepProps) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [expandedScript, setExpandedScript] = useState<string | null>(
     content.scripts[0]?.id || null

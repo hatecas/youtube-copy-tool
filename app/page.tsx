@@ -17,7 +17,7 @@ export default function Home() {
   const [videoUrls, setVideoUrls] = useState<string[]>([]);
   const [analyzedVideos, setAnalyzedVideos] = useState<AnalyzedVideo[]>([]);
   const [topics, setTopics] = useState<TopicSuggestion[]>([]);
-  const [selectedTopic, setSelectedTopic] = useState<TopicSuggestion | null>(null);
+  const [, setSelectedTopic] = useState<TopicSuggestion | null>(null);
   const [generatedContent, setGeneratedContent] = useState<GeneratedContent | null>(null);
   const [analysisId, setAnalysisId] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
