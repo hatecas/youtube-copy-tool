@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:5000";
+const BACKEND_URL = (process.env.BACKEND_URL || "http://localhost:5000").replace(/\/+$/, "");
+
+export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
   try {
@@ -10,13 +12,25 @@ export async function POST(request: NextRequest) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      cache: "no-store",
     });
 
-    const data = await res.json();
-    return NextResponse.json(data, { status: res.status });
-  } catch {
+    const text = await res.text();
+    try {
+      const data = JSON.parse(text);
+      return NextResponse.json(data, { status: res.status });
+    } catch {
+      console.error("[retry-topics] 백엔드 응답이 JSON이 아님:", text.slice(0, 500));
+      return NextResponse.json(
+        { error: `백엔드 응답 오류 (status ${res.status})` },
+        { status: 502 }
+      );
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[retry-topics] 백엔드 연결 실패:", message);
     return NextResponse.json(
-      { error: "백엔드 연결 실패" },
+      { error: `백엔드 연결 실패: ${message}` },
       { status: 500 }
     );
   }
