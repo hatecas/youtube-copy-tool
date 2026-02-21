@@ -2,6 +2,7 @@ import os
 import re
 import uuid
 import json
+import threading
 from datetime import datetime
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -95,6 +96,7 @@ def db_get_project(project_id: str) -> dict | None:
                 "topics": json.loads(row["topics"]) if row.get("topics") else [],
                 "selected_topic_id": row.get("selected_topic_id"),
                 "generated_content": json.loads(row["generated_content"]) if row.get("generated_content") else None,
+                "error_message": row.get("error_message"),
                 "created_at": row.get("created_at"),
             }
         return None
@@ -108,6 +110,8 @@ def db_update_project(project_id: str, updates: dict):
         row = {}
         if "status" in updates:
             row["status"] = updates["status"]
+        if "videos" in updates:
+            row["analyzed_videos"] = json.dumps(updates["videos"], ensure_ascii=False)
         if "topics" in updates:
             row["topics"] = json.dumps(updates["topics"], ensure_ascii=False)
         if "selected_topic_id" in updates:
@@ -116,6 +120,14 @@ def db_update_project(project_id: str, updates: dict):
             row["generated_content"] = json.dumps(updates["generated_content"], ensure_ascii=False)
         if row:
             supabase_client.table("projects").update(row).eq("id", project_id).execute()
+        # error_message 컬럼이 없을 수 있으므로 별도 처리
+        if "error_message" in updates:
+            try:
+                supabase_client.table("projects").update(
+                    {"error_message": updates["error_message"]}
+                ).eq("id", project_id).execute()
+            except Exception:
+                print(f"[경고] error_message 저장 실패 - Supabase에 컬럼이 없을 수 있음")
     else:
         project = _memory_store.get(project_id)
         if project:
@@ -540,60 +552,78 @@ def health():
     })
 
 
+def _do_analyze(analysis_id: str, video_urls: list):
+    """백그라운드에서 영상 분석 수행"""
+    try:
+        videos = []
+        for url in video_urls:
+            video_id = extract_video_id(url)
+            if not video_id:
+                continue
+            info = get_video_info(video_id)
+            if not info:
+                continue
+            transcript = get_transcript(video_id)
+            videos.append({
+                **info,
+                "url": url,
+                "transcript": transcript,
+                "viewRatio": 1.0,
+            })
+
+        if not videos:
+            db_update_project(analysis_id, {
+                "status": "error",
+                "error_message": "유효한 영상을 찾을 수 없습니다",
+            })
+            return
+
+        videos = calc_view_ratios(videos)
+        topics = analyze_with_ai(videos)
+
+        db_update_project(analysis_id, {
+            "status": "topics_ready",
+            "videos": videos,
+            "topics": topics,
+        })
+        print(f"[분석 완료] {analysis_id} - {len(videos)}개 영상, {len(topics)}개 주제")
+    except Exception as e:
+        print(f"[분석 오류] {analysis_id}: {e}")
+        db_update_project(analysis_id, {
+            "status": "error",
+            "error_message": str(e),
+        })
+
+
 @app.route("/api/analyze", methods=["POST"])
 def analyze():
-    """영상 분석 API"""
+    """영상 분석 API (비동기 - 즉시 응답 후 백그라운드 처리)"""
     data = request.get_json()
     video_urls = data.get("video_urls", [])
 
     if len(video_urls) < 3:
         return jsonify({"error": "최소 3개의 영상 URL이 필요합니다"}), 400
 
-    # 영상 정보 수집
-    videos = []
-    for url in video_urls:
-        video_id = extract_video_id(url)
-        if not video_id:
-            continue
-
-        info = get_video_info(video_id)
-        if not info:
-            continue
-
-        transcript = get_transcript(video_id)
-
-        videos.append({
-            **info,
-            "url": url,
-            "transcript": transcript,
-            "viewRatio": 1.0,
-        })
-
-    if not videos:
-        return jsonify({"error": "유효한 영상을 찾을 수 없습니다"}), 400
-
-    # 최근 영상 대비 조회수 비율 계산 + 정렬
-    videos = calc_view_ratios(videos)
-
-    # AI 분석으로 주제 추천
-    topics = analyze_with_ai(videos)
-
-    # DB 저장
+    # 프로젝트 즉시 생성 (analyzing 상태)
     analysis_id = str(uuid.uuid4())
     project = {
         "id": analysis_id,
         "created_at": datetime.now().isoformat(),
         "video_urls": video_urls,
-        "videos": videos,
-        "topics": topics,
-        "status": "topics_ready",
+        "videos": [],
+        "topics": [],
+        "status": "analyzing",
     }
     db_save_project(project)
 
+    # 백그라운드에서 분석 시작
+    thread = threading.Thread(target=_do_analyze, args=(analysis_id, video_urls))
+    thread.daemon = True
+    thread.start()
+
     return jsonify({
         "analysis_id": analysis_id,
-        "videos": videos,
-        "topics": topics,
+        "status": "analyzing",
     })
 
 
@@ -626,9 +656,35 @@ def retry_topics():
     })
 
 
+def _do_generate(analysis_id: str, selected_topic: dict, videos: list, selected_topic_id: str):
+    """백그라운드에서 콘텐츠 생성 수행"""
+    try:
+        result = generate_with_ai(selected_topic, videos)
+
+        generated = {
+            "id": str(uuid.uuid4()),
+            "analysisId": analysis_id,
+            "selectedTopic": selected_topic,
+            **result,
+        }
+
+        db_update_project(analysis_id, {
+            "status": "complete",
+            "selected_topic_id": selected_topic_id,
+            "generated_content": generated,
+        })
+        print(f"[생성 완료] {analysis_id}")
+    except Exception as e:
+        print(f"[생성 오류] {analysis_id}: {e}")
+        db_update_project(analysis_id, {
+            "status": "error",
+            "error_message": str(e),
+        })
+
+
 @app.route("/api/generate", methods=["POST"])
 def generate():
-    """콘텐츠 생성 API"""
+    """콘텐츠 생성 API (비동기 - 즉시 응답 후 백그라운드 처리)"""
     data = request.get_json()
     analysis_id = data.get("analysis_id")
     selected_topic_id = data.get("selected_topic_id")
@@ -647,24 +703,18 @@ def generate():
     if not selected_topic:
         return jsonify({"error": "선택된 주제를 찾을 수 없습니다"}), 404
 
-    # AI로 콘텐츠 생성
-    result = generate_with_ai(selected_topic, project["videos"])
+    # 상태를 generating으로 업데이트
+    db_update_project(analysis_id, {"status": "generating"})
 
-    generated = {
-        "id": str(uuid.uuid4()),
-        "analysisId": analysis_id,
-        "selectedTopic": selected_topic,
-        **result,
-    }
+    # 백그라운드에서 생성 시작
+    thread = threading.Thread(
+        target=_do_generate,
+        args=(analysis_id, selected_topic, project["videos"], selected_topic_id),
+    )
+    thread.daemon = True
+    thread.start()
 
-    # DB 업데이트
-    db_update_project(analysis_id, {
-        "status": "complete",
-        "selected_topic_id": selected_topic_id,
-        "generated_content": generated,
-    })
-
-    return jsonify(generated)
+    return jsonify({"status": "generating", "analysis_id": analysis_id})
 
 
 @app.route("/api/project/<project_id>", methods=["GET"])
