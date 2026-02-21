@@ -47,9 +47,12 @@ if SUPABASE_URL and SUPABASE_KEY:
     try:
         from supabase import create_client
         supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
-        print(f"[설정] Supabase 연동: 활성")
+        print("[설정] Supabase 연동: 활성")
     except ImportError:
         print("[설정] Supabase 연동: 실패 - 'pip install supabase' 필요")
+    except Exception as e:
+        print(f"[설정] Supabase 연동: 실패 - {e}")
+        print("[설정] → Supabase 없이 인메모리 모드로 실행합니다")
 else:
     print("[설정] Supabase 연동: 비활성 (인메모리 모드)")
 
