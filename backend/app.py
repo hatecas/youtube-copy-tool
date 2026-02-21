@@ -5,9 +5,19 @@ import json
 from datetime import datetime
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+# .env 파일 찾기: backend/.env 또는 프로젝트 루트/.env
+_env_path = Path(__file__).parent / ".env"
+if not _env_path.exists():
+    _env_path = Path(__file__).parent.parent / ".env"
+if _env_path.exists():
+    load_dotenv(_env_path)
+    print(f"[설정] .env 로드 완료: {_env_path}")
+else:
+    load_dotenv()
+    print("[설정] .env 파일을 찾을 수 없습니다. 환경변수에서 직접 읽습니다.")
 
 app = Flask(__name__)
 CORS(app, origins=["*"])
@@ -20,16 +30,28 @@ CORS(app, origins=["*"])
 anthropic_client = None
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 if ANTHROPIC_API_KEY:
-    import anthropic
-    anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    try:
+        import anthropic
+        anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        print(f"[설정] Claude AI 연동: 활성 (키: {ANTHROPIC_API_KEY[:20]}...)")
+    except ImportError:
+        print("[설정] Claude AI 연동: 실패 - 'pip install anthropic' 필요")
+else:
+    print("[설정] Claude AI 연동: 비활성 - ANTHROPIC_API_KEY가 .env에 없습니다")
 
 # Supabase
 supabase_client = None
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY")
 if SUPABASE_URL and SUPABASE_KEY:
-    from supabase import create_client
-    supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    try:
+        from supabase import create_client
+        supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        print(f"[설정] Supabase 연동: 활성")
+    except ImportError:
+        print("[설정] Supabase 연동: 실패 - 'pip install supabase' 필요")
+else:
+    print("[설정] Supabase 연동: 비활성 (인메모리 모드)")
 
 
 # ============================================================
