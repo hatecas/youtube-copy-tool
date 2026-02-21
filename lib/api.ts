@@ -1,3 +1,24 @@
+// 프로젝트 상태를 폴링하며 대기 (3초 간격, 최대 5분)
+async function pollProject(
+  projectId: string,
+  targetStatuses: string[],
+  maxWaitMs = 300000,
+  intervalMs = 3000,
+): Promise<Record<string, unknown>> {
+  const start = Date.now();
+  while (Date.now() - start < maxWaitMs) {
+    await new Promise((r) => setTimeout(r, intervalMs));
+    const project = await getProjectStatus(projectId);
+    if (targetStatuses.includes(project.status)) {
+      return project;
+    }
+    if (project.status === "error") {
+      throw new Error(project.error_message || "처리 중 오류가 발생했습니다");
+    }
+  }
+  throw new Error("처리 시간이 초과되었습니다 (5분). 다시 시도해주세요.");
+}
+
 export async function analyzeVideos(videoUrls: string[]) {
   const res = await fetch("/api/analyze", {
     method: "POST",
@@ -10,7 +31,20 @@ export async function analyzeVideos(videoUrls: string[]) {
     throw new Error(err.error || `분석 실패: ${res.statusText}`);
   }
 
-  return res.json();
+  const data = await res.json();
+
+  // 비동기 처리: 백엔드가 즉시 응답하고 백그라운드 처리하는 경우
+  if (data.status === "analyzing") {
+    const project = await pollProject(data.analysis_id, ["topics_ready"]);
+    return {
+      analysis_id: project.id,
+      videos: project.videos,
+      topics: project.topics,
+    };
+  }
+
+  // 동기 처리 (폴백)
+  return data;
 }
 
 export async function retryTopics(
@@ -52,7 +86,16 @@ export async function generateContent(
     throw new Error(err.error || `생성 실패: ${res.statusText}`);
   }
 
-  return res.json();
+  const data = await res.json();
+
+  // 비동기 처리: 백엔드가 즉시 응답하고 백그라운드 처리하는 경우
+  if (data.status === "generating") {
+    const project = await pollProject(analysisId, ["complete"]);
+    return project.generated_content;
+  }
+
+  // 동기 처리 (폴백)
+  return data;
 }
 
 export async function getProjectStatus(projectId: string) {
