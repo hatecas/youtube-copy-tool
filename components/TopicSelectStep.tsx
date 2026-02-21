@@ -11,6 +11,8 @@ import {
   ChevronDown,
   ChevronUp,
   BarChart3,
+  FileText,
+  Loader2,
 } from "lucide-react";
 import { AnalyzedVideo, TopicSuggestion } from "@/lib/types";
 import { formatViewCount, formatDate } from "@/lib/api";
@@ -20,6 +22,7 @@ interface TopicSelectStepProps {
   topics: TopicSuggestion[];
   onSelectTopic: (topic: TopicSuggestion) => void;
   onRetry: () => void;
+  isRetrying?: boolean;
 }
 
 export default function TopicSelectStep({
@@ -27,9 +30,11 @@ export default function TopicSelectStep({
   topics,
   onSelectTopic,
   onRetry,
+  isRetrying,
 }: TopicSelectStepProps) {
-  const [showVideos, setShowVideos] = useState(false);
+  const [showVideos, setShowVideos] = useState(true); // 기본 펼침
   const [hoveredTopic, setHoveredTopic] = useState<string | null>(null);
+  const [expandedTranscript, setExpandedTranscript] = useState<string | null>(null);
 
   // 조회수 높은 순 정렬
   const sortedVideos = [...videos].sort((a, b) => b.viewCount - a.viewCount);
@@ -42,14 +47,14 @@ export default function TopicSelectStep({
           분석 완료
         </div>
         <h2 className="text-3xl font-bold mb-3 tracking-tight">
-          주제를 선택하세요
+          분석 결과 & 주제 추천
         </h2>
         <p className="text-text-secondary">
-          레퍼런스 영상 분석 결과 아래 주제들이 높은 성과를 낼 것으로 예측됩니다
+          레퍼런스 영상 {videos.length}개를 분석했습니다. 아래에서 추천 주제를 선택하세요.
         </p>
       </div>
 
-      {/* 분석된 영상 요약 (접이식) */}
+      {/* 분석된 영상 상세 (기본 펼침) */}
       <div className="max-w-3xl mx-auto mb-8">
         <button
           onClick={() => setShowVideos(!showVideos)}
@@ -57,11 +62,11 @@ export default function TopicSelectStep({
         >
           <div className="flex items-center gap-3">
             <BarChart3 size={18} className="text-accent" />
-            <span className="text-sm font-medium">
+            <span className="text-sm font-bold">
               분석된 영상 {videos.length}개
             </span>
             <span className="text-xs text-text-muted">
-              (조회수 높은 순 정렬)
+              (조회수 높은 순)
             </span>
           </div>
           {showVideos ? (
@@ -72,40 +77,72 @@ export default function TopicSelectStep({
         </button>
 
         {showVideos && (
-          <div className="mt-2 space-y-2 animate-fade-in-up">
+          <div className="mt-2 space-y-3 animate-fade-in-up">
             {sortedVideos.map((video, i) => (
-              <div key={video.id} className="card p-4 flex items-center gap-4">
-                <div className="text-lg font-bold text-text-muted w-6 text-center">
-                  {i + 1}
-                </div>
-                <div className="w-24 h-14 rounded-lg overflow-hidden flex-shrink-0 bg-bg-secondary">
-                  <img
-                    src={video.thumbnail}
-                    alt={video.title}
-                    className="w-full h-full object-cover"
-                  />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">{video.title}</p>
-                  <div className="flex items-center gap-3 mt-1">
-                    <span className="text-xs text-text-muted">
-                      {video.channelName}
-                    </span>
-                    <span className="flex items-center gap-1 text-xs text-text-muted">
-                      <Eye size={10} />
-                      {formatViewCount(video.viewCount)}
-                    </span>
-                    <span className="text-xs text-text-muted">
-                      {formatDate(video.publishedAt)}
-                    </span>
+              <div key={video.id} className="card p-4">
+                <div className="flex items-start gap-4">
+                  <div className="text-lg font-bold text-text-muted w-6 text-center flex-shrink-0 pt-1">
+                    {i + 1}
+                  </div>
+                  <div className="w-28 h-16 rounded-lg overflow-hidden flex-shrink-0 bg-bg-secondary">
+                    <img
+                      src={video.thumbnail}
+                      alt={video.title}
+                      className="w-full h-full object-cover"
+                      onError={(e) => {
+                        const img = e.target as HTMLImageElement;
+                        if (img.src.includes("maxresdefault")) {
+                          img.src = img.src.replace("maxresdefault", "hqdefault");
+                        }
+                      }}
+                    />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold mb-1 leading-snug">{video.title}</p>
+                    <div className="flex items-center gap-3 mb-2">
+                      <span className="text-xs text-text-muted">
+                        {video.channelName}
+                      </span>
+                      <span className="flex items-center gap-1 text-xs text-text-muted">
+                        <Eye size={10} />
+                        {formatViewCount(video.viewCount)}
+                      </span>
+                      <span className="text-xs text-text-muted">
+                        {formatDate(video.publishedAt)}
+                      </span>
+                      {video.viewRatio > 1.5 && (
+                        <span className="badge badge-accent text-[10px] py-0">
+                          <TrendingUp size={9} className="mr-0.5" />
+                          최근 대비 {video.viewRatio.toFixed(1)}x
+                        </span>
+                      )}
+                    </div>
+
+                    {/* 대본 미리보기 */}
+                    {video.transcript && video.transcript !== "자막을 추출할 수 없습니다." && (
+                      <div>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setExpandedTranscript(
+                              expandedTranscript === video.id ? null : video.id
+                            );
+                          }}
+                          className="flex items-center gap-1.5 text-xs text-accent hover:text-accent/80 transition-colors"
+                        >
+                          <FileText size={10} />
+                          {expandedTranscript === video.id ? "대본 접기" : "추출된 대본 보기"}
+                        </button>
+                        {expandedTranscript === video.id && (
+                          <div className="mt-2 p-3 bg-bg-primary rounded-lg text-xs text-text-muted leading-relaxed max-h-40 overflow-y-auto">
+                            {video.transcript.slice(0, 800)}
+                            {video.transcript.length > 800 && "..."}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
-                {video.viewRatio > 1.5 && (
-                  <div className="badge badge-accent text-[11px]">
-                    <TrendingUp size={10} className="mr-1" />
-                    {video.viewRatio.toFixed(1)}x
-                  </div>
-                )}
               </div>
             ))}
           </div>
@@ -113,6 +150,13 @@ export default function TopicSelectStep({
       </div>
 
       {/* 주제 카드들 */}
+      <div className="max-w-3xl mx-auto mb-4">
+        <div className="flex items-center gap-2 mb-4">
+          <Sparkles size={16} className="text-accent" />
+          <h3 className="text-lg font-bold">AI 추천 주제</h3>
+        </div>
+      </div>
+
       <div className="max-w-3xl mx-auto space-y-4 mb-8">
         {topics.map((topic, i) => (
           <div
@@ -183,10 +227,17 @@ export default function TopicSelectStep({
       <div className="max-w-3xl mx-auto text-center">
         <button
           onClick={onRetry}
-          className="btn-secondary inline-flex items-center gap-2 text-sm"
+          disabled={isRetrying}
+          className="btn-secondary inline-flex items-center gap-2 text-sm disabled:opacity-50"
         >
-          <RefreshCw size={14} />
-          마음에 드는 주제가 없어요 — 다시 추천받기
+          {isRetrying ? (
+            <Loader2 size={14} className="animate-spin" />
+          ) : (
+            <RefreshCw size={14} />
+          )}
+          {isRetrying
+            ? "새로운 주제 추천 받는 중..."
+            : "마음에 드는 주제가 없어요 — 다시 추천받기"}
         </button>
       </div>
     </div>
