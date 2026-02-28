@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Plus, Trash2, ArrowRight, Link2, AlertCircle, RefreshCw, Sparkles, CheckSquare, Square, Settings2 } from "lucide-react";
 import { extractVideoId, getThumbnailUrl } from "@/lib/api";
 import PreferenceModal, { loadPreferences } from "@/components/PreferenceModal";
@@ -28,6 +28,7 @@ export default function VideoInputStep({ onSubmit }: VideoInputStepProps) {
   // 추천 영상 관련 상태
   const [recommended, setRecommended] = useState<RecommendedVideo[]>([]);
   const [selectedVideos, setSelectedVideos] = useState<RecommendedVideo[]>([]); // 누적 선택
+
   const [loadingRecommend, setLoadingRecommend] = useState(false);
   const [recommendQuery, setRecommendQuery] = useState("");
   const [mode, setMode] = useState<"recommend" | "manual">("recommend");
@@ -42,14 +43,15 @@ export default function VideoInputStep({ onSubmit }: VideoInputStepProps) {
     setLoadingRecommend(true);
     try {
       const prefs = loadPreferences();
-      let url = `${BACKEND_URL}/api/recommend`;
+      const params = new URLSearchParams();
       if (prefs.keywords.length > 0 || prefs.channels.length > 0) {
-        const params = new URLSearchParams();
         prefs.keywords.forEach((k) => params.append("keywords", k));
         prefs.channels.forEach((c) => params.append("channelIds", c.id));
-        url = `${BACKEND_URL}/api/recommend-custom?${params.toString()}`;
       }
-      const res = await fetch(url);
+      const endpoint = (prefs.keywords.length > 0 || prefs.channels.length > 0)
+        ? "recommend-custom"
+        : "recommend";
+      const res = await fetch(`${BACKEND_URL}/api/${endpoint}?${params.toString()}`);
       const data = await res.json();
       setRecommended(data.videos || []);
       setRecommendQuery(data.query || "");

@@ -542,6 +542,43 @@ def _fallback_generate(topic: dict) -> dict:
 # API 엔드포인트
 # ============================================================
 
+import re as _re
+
+def _parse_duration_seconds(iso_duration):
+    """ISO 8601 duration → 초 변환 (예: PT1M30S → 90)"""
+    try:
+        h = int((_re.search(r'(\d+)H', iso_duration) or [0,0])[1])
+        m = int((_re.search(r'(\d+)M', iso_duration) or [0,0])[1])
+        s = int((_re.search(r'(\d+)S', iso_duration) or [0,0])[1])
+        return h * 3600 + m * 60 + s
+    except Exception:
+        return 9999
+
+NEWS_CHANNEL_KEYWORDS = ["뉴스", "news", "MBC", "KBS", "SBS", "YTN", "JTBC", "연합뉴스", "채널A", "TV조선"]
+
+def _is_valid_video(item):
+    """쇼츠·뉴스·해외 영상 필터"""
+    snippet = item.get("snippet", {})
+    content = item.get("contentDetails", {})
+
+    # 1. 쇼츠 제외: 60초 이하
+    duration_sec = _parse_duration_seconds(content.get("duration", "PT0S"))
+    if duration_sec <= 60:
+        return False
+
+    # 2. 뉴스 채널 제외
+    channel_title = snippet.get("channelTitle", "")
+    if any(kw.lower() in channel_title.lower() for kw in NEWS_CHANNEL_KEYWORDS):
+        return False
+
+    # 3. 해외 영상 제외: 기본 언어가 한국어가 아닌 경우
+    lang = snippet.get("defaultAudioLanguage") or snippet.get("defaultLanguage") or ""
+    if lang and not lang.startswith("ko"):
+        return False
+
+    return True
+
+
 @app.route("/api/recommend", methods=["GET"])
 def recommend():
     """AI 관련 핫한 유튜브 영상 5개 자동 추천"""
@@ -585,12 +622,14 @@ def recommend():
             return jsonify({"videos": []})
 
         detail_response = youtube.videos().list(
-            part="snippet,statistics",
+            part="snippet,statistics,contentDetails",
             id=",".join(video_ids[:10])
         ).execute()
 
         videos = []
         for item in detail_response.get("items", []):
+            if not _is_valid_video(item):
+                continue
             snippet = item["snippet"]
             stats = item.get("statistics", {})
             vid = item["id"]
@@ -648,8 +687,10 @@ def recommend_custom():
             ).execute()
             video_ids = [item["id"]["videoId"] for item in response.get("items", []) if item["id"].get("videoId")]
             if video_ids:
-                detail = youtube.videos().list(part="snippet,statistics", id=",".join(video_ids[:10])).execute()
+                detail = youtube.videos().list(part="snippet,statistics,contentDetails", id=",".join(video_ids[:10])).execute()
                 for item in detail.get("items", []):
+                    if not _is_valid_video(item):
+                        continue
                     snippet = item["snippet"]
                     stats = item.get("statistics", {})
                     vid = item["id"]
@@ -665,9 +706,12 @@ def recommend_custom():
                         "sourceLabel": query,
                     })
 
-        # 채널 최신 영상
+        # 채널 최신 영상 + 유사 영상 탐색
         if channel_ids:
+            channel_tags = []  # 채널들의 태그 수집
+
             for channel_id in channel_ids[:5]:
+                # 채널 최신 영상 3개
                 response = youtube.search().list(
                     part="snippet",
                     channelId=channel_id,
@@ -677,8 +721,10 @@ def recommend_custom():
                 ).execute()
                 video_ids = [item["id"]["videoId"] for item in response.get("items", []) if item["id"].get("videoId")]
                 if video_ids:
-                    detail = youtube.videos().list(part="snippet,statistics", id=",".join(video_ids)).execute()
+                    detail = youtube.videos().list(part="snippet,statistics,contentDetails", id=",".join(video_ids)).execute()
                     for item in detail.get("items", []):
+                        if not _is_valid_video(item):
+                            continue
                         snippet = item["snippet"]
                         stats = item.get("statistics", {})
                         vid = item["id"]
@@ -693,8 +739,52 @@ def recommend_custom():
                             "source": "channel",
                             "sourceLabel": snippet.get("channelTitle", ""),
                         })
+                        # 태그 수집
+                        tags = snippet.get("tags", [])
+                        channel_tags.extend(tags[:5])
 
-        # 중복 제거 후 조회수 순 정렬, 최대 10개
+            # 수집된 태그로 유사 영상 검색
+            if channel_tags:
+                import random
+                # 태그 중 랜덤 하나로 유사 영상 검색
+                similar_query = random.choice(channel_tags)
+                sim_response = youtube.search().list(
+                    part="snippet",
+                    q=similar_query,
+                    type="video",
+                    order="viewCount",
+                    maxResults=10,
+                    regionCode="KR",
+                    relevanceLanguage="ko",
+                    publishedAfter=datetime.now().strftime("%Y-%m-01T00:00:00Z"),
+                ).execute()
+                sim_video_ids = [item["id"]["videoId"] for item in sim_response.get("items", []) if item["id"].get("videoId")]
+                # 등록된 채널 영상은 제외
+                registered_channel_ids = set(channel_ids)
+                if sim_video_ids:
+                    sim_detail = youtube.videos().list(part="snippet,statistics,contentDetails", id=",".join(sim_video_ids[:10])).execute()
+                    for item in sim_detail.get("items", []):
+                        if not _is_valid_video(item):
+                            continue
+                        snippet = item["snippet"]
+                        # 등록 채널 영상은 이미 위에서 추가했으니 스킵
+                        if snippet.get("channelId") in registered_channel_ids:
+                            continue
+                        stats = item.get("statistics", {})
+                        vid = item["id"]
+                        all_videos.append({
+                            "videoId": vid,
+                            "title": snippet.get("title", ""),
+                            "channelName": snippet.get("channelTitle", ""),
+                            "thumbnail": f"https://img.youtube.com/vi/{vid}/hqdefault.jpg",
+                            "viewCount": int(stats.get("viewCount", 0)),
+                            "publishedAt": snippet.get("publishedAt", "")[:10],
+                            "url": f"https://www.youtube.com/watch?v={vid}",
+                            "source": "similar",
+                            "sourceLabel": similar_query,
+                        })
+
+        # 중복 제거, 조회수 순 정렬, 최대 5개
         seen = set()
         unique = []
         for v in all_videos:
@@ -702,7 +792,7 @@ def recommend_custom():
                 seen.add(v["videoId"])
                 unique.append(v)
         unique.sort(key=lambda x: x["viewCount"], reverse=True)
-        return jsonify({"videos": unique[:10]})
+        return jsonify({"videos": unique[:5]})
 
     except Exception as e:
         print(f"맞춤 추천 오류: {e}")
