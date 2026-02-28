@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Header from "@/components/Header";
 import StepIndicator from "@/components/StepIndicator";
 import VideoInputStep from "@/components/VideoInputStep";
@@ -12,7 +12,53 @@ import { analyzeVideos, retryTopics, generateContent } from "@/lib/api";
 
 export type AppStep = "input" | "analyzing" | "topics" | "generating" | "result";
 
+const ACCESS_CODE = "5656";
+const STORAGE_KEY = "yt_access_granted";
+
+function AccessGate({ onGranted }: { onGranted: () => void }) {
+  const [input, setInput] = useState("");
+  const [error, setError] = useState(false);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (input === ACCESS_CODE) {
+      localStorage.setItem(STORAGE_KEY, "1");
+      onGranted();
+    } else {
+      setError(true);
+      setInput("");
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center px-6">
+      <div className="w-full max-w-sm">
+        <div className="text-center mb-8">
+          <div className="text-4xl mb-4">🔒</div>
+          <h1 className="text-2xl font-bold mb-2">입장 코드를 입력하세요</h1>
+          <p className="text-text-muted text-sm">허가된 사용자만 접근할 수 있습니다.</p>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <input
+            type="password"
+            value={input}
+            onChange={(e) => { setInput(e.target.value); setError(false); }}
+            placeholder="입장 코드"
+            autoFocus
+            className={`input-field text-center text-lg tracking-widest ${error ? "border-red-500/50" : ""}`}
+          />
+          {error && <p className="text-red-400 text-sm text-center">코드가 올바르지 않습니다.</p>}
+          <button type="submit" className="btn-primary w-full">
+            입장하기
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export default function Home() {
+  const [accessGranted, setAccessGranted] = useState(false);
   const [currentStep, setCurrentStep] = useState<AppStep>("input");
   const [videoUrls, setVideoUrls] = useState<string[]>([]);
   const [analyzedVideos, setAnalyzedVideos] = useState<AnalyzedVideo[]>([]);
@@ -22,6 +68,17 @@ export default function Home() {
   const [analysisId, setAnalysisId] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [isRetrying, setIsRetrying] = useState(false);
+
+  // 로컬스토리지에서 입장 여부 확인
+  useEffect(() => {
+    if (localStorage.getItem(STORAGE_KEY) === "1") {
+      setAccessGranted(true);
+    }
+  }, []);
+
+  if (!accessGranted) {
+    return <AccessGate onGranted={() => setAccessGranted(true)} />;
+  }
 
   // 최소 대기 시간 보장 (UX - 너무 빨리 끝나면 가벼워 보임)
   const withMinDelay = async <T,>(promise: Promise<T>, minMs: number): Promise<T> => {

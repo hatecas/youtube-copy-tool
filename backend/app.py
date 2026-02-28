@@ -82,7 +82,7 @@ def db_save_project(project: dict):
         _memory_store[project["id"]] = project
 
 
-def db_get_project(project_id: str) -> dict | None:
+def db_get_project(project_id: str):
     """프로젝트 조회"""
     if supabase_client:
         res = supabase_client.table("projects").select("*").eq("id", project_id).execute()
@@ -138,7 +138,7 @@ def db_update_project(project_id: str, updates: dict):
 # YouTube 유틸리티
 # ============================================================
 
-def extract_video_id(url: str) -> str | None:
+def extract_video_id(url: str):
     """YouTube URL에서 video ID 추출"""
     patterns = [
         r'(?:youtube\.com\/watch\?v=)([a-zA-Z0-9_-]{11})',
@@ -247,7 +247,7 @@ def get_transcript(video_id: str) -> str:
         return "자막을 추출할 수 없습니다."
 
 
-def calc_view_ratios(videos: list[dict]) -> list[dict]:
+def calc_view_ratios(videos: list) -> list[dict]:
     """최근 영상 대비 조회수 비율 계산
 
     요구사항: '제일 최근꺼 대비 조회수 높은거 순서'
@@ -276,7 +276,7 @@ def calc_view_ratios(videos: list[dict]) -> list[dict]:
 # AI 분석 (Claude API)
 # ============================================================
 
-def analyze_with_ai(videos: list[dict], exclude_topics: list[str] | None = None) -> list[dict]:
+def analyze_with_ai(videos: list, exclude_topics = None) -> list[dict]:
     """Claude AI로 영상 분석 후 주제 3개 추천"""
 
     if not anthropic_client:
@@ -357,7 +357,7 @@ def analyze_with_ai(videos: list[dict], exclude_topics: list[str] | None = None)
         return _fallback_analyze(videos)
 
 
-def generate_with_ai(topic: dict, videos: list[dict]) -> dict:
+def generate_with_ai(topic: dict, videos: list) -> dict:
     """Claude AI로 콘텐츠 생성 (썸네일 텍스트, 제목, 대본)"""
 
     if not anthropic_client:
@@ -479,7 +479,7 @@ def generate_with_ai(topic: dict, videos: list[dict]) -> dict:
 # AI 폴백 (API 키 없을 때)
 # ============================================================
 
-def _fallback_analyze(videos: list[dict]) -> list[dict]:
+def _fallback_analyze(videos: list) -> list[dict]:
     """AI 없을 때 기본 주제 추천"""
     titles = ", ".join(v["title"] for v in videos[:3])
     return [
@@ -541,6 +541,77 @@ def _fallback_generate(topic: dict) -> dict:
 # ============================================================
 # API 엔드포인트
 # ============================================================
+
+@app.route("/api/recommend", methods=["GET"])
+def recommend():
+    """AI 관련 핫한 유튜브 영상 5개 자동 추천"""
+    api_key = os.getenv("YOUTUBE_API_KEY")
+    if not api_key:
+        return jsonify({"error": "YOUTUBE_API_KEY가 설정되지 않았습니다"}), 500
+
+    try:
+        from googleapiclient.discovery import build
+        youtube = build("youtube", "v3", developerKey=api_key)
+
+        # 검색 키워드 (랜덤으로 다양하게)
+        import random
+        queries = [
+            "AI 유튜브 자동화",
+            "AI 콘텐츠 제작",
+            "ChatGPT 활용법",
+            "AI 부업 만들기",
+            "Claude AI 사용법",
+            "인공지능 영상 만들기",
+            "AI 수익화",
+        ]
+        query = random.choice(queries)
+
+        response = youtube.search().list(
+            part="snippet",
+            q=query,
+            type="video",
+            order="viewCount",
+            maxResults=10,
+            regionCode="KR",
+            relevanceLanguage="ko",
+            publishedAfter=datetime.now().strftime("%Y-%m-01T00:00:00Z"),
+        ).execute()
+
+        items = response.get("items", [])
+
+        # video ID 목록으로 상세 정보 조회
+        video_ids = [item["id"]["videoId"] for item in items if item["id"].get("videoId")]
+        if not video_ids:
+            return jsonify({"videos": []})
+
+        detail_response = youtube.videos().list(
+            part="snippet,statistics",
+            id=",".join(video_ids[:10])
+        ).execute()
+
+        videos = []
+        for item in detail_response.get("items", []):
+            snippet = item["snippet"]
+            stats = item.get("statistics", {})
+            vid = item["id"]
+            videos.append({
+                "videoId": vid,
+                "title": snippet.get("title", ""),
+                "channelName": snippet.get("channelTitle", ""),
+                "thumbnail": f"https://img.youtube.com/vi/{vid}/hqdefault.jpg",
+                "viewCount": int(stats.get("viewCount", 0)),
+                "publishedAt": snippet.get("publishedAt", "")[:10],
+                "url": f"https://www.youtube.com/watch?v={vid}",
+            })
+
+        # 조회수 높은 순 5개
+        videos.sort(key=lambda x: x["viewCount"], reverse=True)
+        return jsonify({"videos": videos[:5], "query": query})
+
+    except Exception as e:
+        print(f"추천 API 오류: {e}")
+        return jsonify({"error": str(e)}), 500
+
 
 @app.route("/api/health", methods=["GET"])
 def health():
