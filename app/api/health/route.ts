@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 
-const BACKEND_URL = (process.env.BACKEND_URL || "http://localhost:5000").replace(/\/+$/, "");
+const BACKEND_URL = (process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000").replace(/\/+$/, "");
 
 export async function GET() {
   const result: Record<string, unknown> = {
     frontend: "ok",
     backend_url: BACKEND_URL,
-    backend_url_configured: !!process.env.BACKEND_URL,
+    backend_url_configured: !!process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL,
   };
 
   try {
