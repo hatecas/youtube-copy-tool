@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Plus, Trash2, ArrowRight, Link2, AlertCircle, RefreshCw, Sparkles, CheckSquare, Square } from "lucide-react";
+import { Plus, Trash2, ArrowRight, Link2, AlertCircle, RefreshCw, Sparkles, CheckSquare, Square, Settings2 } from "lucide-react";
 import { extractVideoId, getThumbnailUrl } from "@/lib/api";
+import PreferenceModal, { loadPreferences } from "@/components/PreferenceModal";
 
 interface RecommendedVideo {
   videoId: string;
@@ -30,6 +31,7 @@ export default function VideoInputStep({ onSubmit }: VideoInputStepProps) {
   const [loadingRecommend, setLoadingRecommend] = useState(false);
   const [recommendQuery, setRecommendQuery] = useState("");
   const [mode, setMode] = useState<"recommend" | "manual">("recommend");
+  const [showPrefs, setShowPrefs] = useState(false);
 
   // 컴포넌트 마운트 시 자동 추천
   useEffect(() => {
@@ -39,7 +41,15 @@ export default function VideoInputStep({ onSubmit }: VideoInputStepProps) {
   const fetchRecommended = async () => {
     setLoadingRecommend(true);
     try {
-      const res = await fetch(`${BACKEND_URL}/api/recommend`);
+      const prefs = loadPreferences();
+      let url = `${BACKEND_URL}/api/recommend`;
+      if (prefs.keywords.length > 0 || prefs.channels.length > 0) {
+        const params = new URLSearchParams();
+        prefs.keywords.forEach((k) => params.append("keywords", k));
+        prefs.channels.forEach((c) => params.append("channelIds", c.id));
+        url = `${BACKEND_URL}/api/recommend-custom?${params.toString()}`;
+      }
+      const res = await fetch(url);
       const data = await res.json();
       setRecommended(data.videos || []);
       setRecommendQuery(data.query || "");
@@ -105,6 +115,7 @@ export default function VideoInputStep({ onSubmit }: VideoInputStepProps) {
 
   return (
     <div className="animate-fade-in-up">
+      {showPrefs && <PreferenceModal onClose={() => { setShowPrefs(false); fetchRecommended(); }} />}
       {/* Hero */}
       <div className="text-center mb-8">
         <div className="inline-flex items-center gap-2 badge badge-accent mb-4">
@@ -176,14 +187,23 @@ export default function VideoInputStep({ onSubmit }: VideoInputStepProps) {
             <p className="text-sm text-text-muted">
               {recommendQuery && <span>🔍 <b>{recommendQuery}</b> 기준 추천</span>}
             </p>
-            <button
-              onClick={fetchRecommended}
-              disabled={loadingRecommend}
-              className="flex items-center gap-1.5 text-sm text-text-muted hover:text-accent transition-colors"
-            >
-              <RefreshCw size={14} className={loadingRecommend ? "animate-spin" : ""} />
-              새로 추천받기
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setShowPrefs(true)}
+                className="flex items-center gap-1.5 text-sm text-text-muted hover:text-accent transition-colors"
+              >
+                <Settings2 size={14} />
+                추천 설정
+              </button>
+              <button
+                onClick={fetchRecommended}
+                disabled={loadingRecommend}
+                className="flex items-center gap-1.5 text-sm text-text-muted hover:text-accent transition-colors"
+              >
+                <RefreshCw size={14} className={loadingRecommend ? "animate-spin" : ""} />
+                새로 추천받기
+              </button>
+            </div>
           </div>
 
           {/* 추천 카드 목록 */}

@@ -613,6 +613,134 @@ def recommend():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/recommend-custom", methods=["GET"])
+def recommend_custom():
+    """키워드 + 채널 기반 맞춤 추천"""
+    api_key = os.getenv("YOUTUBE_API_KEY")
+    if not api_key:
+        return jsonify({"error": "YOUTUBE_API_KEY가 설정되지 않았습니다"}), 500
+
+    keywords = request.args.getlist("keywords")  # ?keywords=AI&keywords=유튜브자동화
+    channel_ids = request.args.getlist("channelIds")  # ?channelIds=UCxxx&channelIds=UCyyy
+
+    if not keywords and not channel_ids:
+        return jsonify({"error": "keywords 또는 channelIds 필요"}), 400
+
+    try:
+        import random
+        from googleapiclient.discovery import build
+        youtube = build("youtube", "v3", developerKey=api_key)
+
+        all_videos = []
+
+        # 키워드 검색
+        if keywords:
+            query = random.choice(keywords)
+            response = youtube.search().list(
+                part="snippet",
+                q=query,
+                type="video",
+                order="viewCount",
+                maxResults=10,
+                regionCode="KR",
+                relevanceLanguage="ko",
+                publishedAfter=datetime.now().strftime("%Y-%m-01T00:00:00Z"),
+            ).execute()
+            video_ids = [item["id"]["videoId"] for item in response.get("items", []) if item["id"].get("videoId")]
+            if video_ids:
+                detail = youtube.videos().list(part="snippet,statistics", id=",".join(video_ids[:10])).execute()
+                for item in detail.get("items", []):
+                    snippet = item["snippet"]
+                    stats = item.get("statistics", {})
+                    vid = item["id"]
+                    all_videos.append({
+                        "videoId": vid,
+                        "title": snippet.get("title", ""),
+                        "channelName": snippet.get("channelTitle", ""),
+                        "thumbnail": f"https://img.youtube.com/vi/{vid}/hqdefault.jpg",
+                        "viewCount": int(stats.get("viewCount", 0)),
+                        "publishedAt": snippet.get("publishedAt", "")[:10],
+                        "url": f"https://www.youtube.com/watch?v={vid}",
+                        "source": "keyword",
+                        "sourceLabel": query,
+                    })
+
+        # 채널 최신 영상
+        if channel_ids:
+            for channel_id in channel_ids[:5]:
+                response = youtube.search().list(
+                    part="snippet",
+                    channelId=channel_id,
+                    type="video",
+                    order="date",
+                    maxResults=3,
+                ).execute()
+                video_ids = [item["id"]["videoId"] for item in response.get("items", []) if item["id"].get("videoId")]
+                if video_ids:
+                    detail = youtube.videos().list(part="snippet,statistics", id=",".join(video_ids)).execute()
+                    for item in detail.get("items", []):
+                        snippet = item["snippet"]
+                        stats = item.get("statistics", {})
+                        vid = item["id"]
+                        all_videos.append({
+                            "videoId": vid,
+                            "title": snippet.get("title", ""),
+                            "channelName": snippet.get("channelTitle", ""),
+                            "thumbnail": f"https://img.youtube.com/vi/{vid}/hqdefault.jpg",
+                            "viewCount": int(stats.get("viewCount", 0)),
+                            "publishedAt": snippet.get("publishedAt", "")[:10],
+                            "url": f"https://www.youtube.com/watch?v={vid}",
+                            "source": "channel",
+                            "sourceLabel": snippet.get("channelTitle", ""),
+                        })
+
+        # 중복 제거 후 조회수 순 정렬, 최대 10개
+        seen = set()
+        unique = []
+        for v in all_videos:
+            if v["videoId"] not in seen:
+                seen.add(v["videoId"])
+                unique.append(v)
+        unique.sort(key=lambda x: x["viewCount"], reverse=True)
+        return jsonify({"videos": unique[:10]})
+
+    except Exception as e:
+        print(f"맞춤 추천 오류: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/channel-info", methods=["GET"])
+def channel_info():
+    """영상 URL에서 채널 정보 추출"""
+    api_key = os.getenv("YOUTUBE_API_KEY")
+    video_url = request.args.get("url", "")
+
+    # 영상 ID 추출
+    import re
+    match = re.search(r"(?:v=|youtu\.be/)([a-zA-Z0-9_-]{11})", video_url)
+    if not match:
+        return jsonify({"error": "올바른 유튜브 URL이 아닙니다"}), 400
+
+    video_id = match.group(1)
+
+    try:
+        from googleapiclient.discovery import build
+        youtube = build("youtube", "v3", developerKey=api_key)
+        response = youtube.videos().list(part="snippet", id=video_id).execute()
+        items = response.get("items", [])
+        if not items:
+            return jsonify({"error": "영상을 찾을 수 없습니다"}), 404
+
+        snippet = items[0]["snippet"]
+        return jsonify({
+            "channelId": snippet["channelId"],
+            "channelName": snippet["channelTitle"],
+            "videoTitle": snippet["title"],
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/health", methods=["GET"])
 def health():
     return jsonify({
