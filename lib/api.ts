@@ -1,3 +1,5 @@
+import { ConfirmedContent } from "./types";
+
 // 프로젝트 상태를 폴링하며 대기 (3초 간격, 최대 5분)
 async function pollProject(
   projectId: string,
@@ -33,7 +35,6 @@ export async function analyzeVideos(videoUrls: string[]) {
 
   const data = await res.json();
 
-  // 비동기 처리: 백엔드가 즉시 응답하고 백그라운드 처리하는 경우
   if (data.status === "analyzing") {
     const project = await pollProject(data.analysis_id, ["topics_ready"]);
     return {
@@ -43,7 +44,6 @@ export async function analyzeVideos(videoUrls: string[]) {
     };
   }
 
-  // 동기 처리 (폴백)
   return data;
 }
 
@@ -88,14 +88,70 @@ export async function generateContent(
 
   const data = await res.json();
 
-  // 비동기 처리: 백엔드가 즉시 응답하고 백그라운드 처리하는 경우
   if (data.status === "generating") {
     const project = await pollProject(analysisId, ["complete"]);
     return project.generated_content;
   }
 
-  // 동기 처리 (폴백)
   return data;
+}
+
+export async function confirmContent(
+  analysisId: string,
+  confirmedContent: ConfirmedContent
+) {
+  const res = await fetch("/api/confirm", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      analysis_id: analysisId,
+      confirmed_content: confirmedContent,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `확정 실패: ${res.statusText}`);
+  }
+
+  return res.json();
+}
+
+export async function startProduction(analysisId: string) {
+  const res = await fetch("/api/produce", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ analysis_id: analysisId }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `제작 시작 실패: ${res.statusText}`);
+  }
+
+  const data = await res.json();
+
+  if (data.status === "producing") {
+    const project = await pollProject(analysisId, ["production_done"], 600000, 5000);
+    return project.production_assets;
+  }
+
+  return data;
+}
+
+export async function uploadToYoutube(analysisId: string) {
+  const res = await fetch("/api/upload-youtube", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ analysis_id: analysisId }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `업로드 실패: ${res.statusText}`);
+  }
+
+  return res.json();
 }
 
 export async function getProjectStatus(projectId: string) {
@@ -124,7 +180,7 @@ export function extractVideoId(url: string): string | null {
   return null;
 }
 
-// YouTube 썸네일 URL 가져오기 (hqdefault는 모든 영상에 존재)
+// YouTube 썸네일 URL 가져오기
 export function getThumbnailUrl(videoId: string): string {
   return `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
 }

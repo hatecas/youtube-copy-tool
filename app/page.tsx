@@ -7,10 +7,36 @@ import VideoInputStep from "@/components/VideoInputStep";
 import AnalysisStep from "@/components/AnalysisStep";
 import TopicSelectStep from "@/components/TopicSelectStep";
 import ResultStep from "@/components/ResultStep";
-import { AnalyzedVideo, TopicSuggestion, GeneratedContent } from "@/lib/types";
-import { analyzeVideos, retryTopics, generateContent } from "@/lib/api";
+import ConfirmStep from "@/components/ConfirmStep";
+import ProductionStep from "@/components/ProductionStep";
+import UploadStep from "@/components/UploadStep";
+import {
+  AnalyzedVideo,
+  TopicSuggestion,
+  GeneratedContent,
+  ConfirmedContent,
+  ProductionAssets,
+} from "@/lib/types";
+import {
+  analyzeVideos,
+  retryTopics,
+  generateContent,
+  confirmContent,
+  startProduction,
+  uploadToYoutube,
+  getProjectStatus,
+} from "@/lib/api";
 
-export type AppStep = "input" | "analyzing" | "topics" | "generating" | "result";
+export type AppStep =
+  | "input"
+  | "analyzing"
+  | "topics"
+  | "generating"
+  | "result"
+  | "confirm"
+  | "producing"
+  | "production"
+  | "upload";
 
 const ACCESS_CODE = "5656";
 const STORAGE_KEY = "yt_access_granted";
@@ -65,11 +91,13 @@ export default function Home() {
   const [topics, setTopics] = useState<TopicSuggestion[]>([]);
   const [, setSelectedTopic] = useState<TopicSuggestion | null>(null);
   const [generatedContent, setGeneratedContent] = useState<GeneratedContent | null>(null);
+  const [confirmedContent, setConfirmedContent] = useState<ConfirmedContent | null>(null);
+  const [productionAssets, setProductionAssets] = useState<ProductionAssets | null>(null);
+  const [isProducing, setIsProducing] = useState(false);
   const [analysisId, setAnalysisId] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [isRetrying, setIsRetrying] = useState(false);
 
-  // 로컬스토리지에서 입장 여부 확인
   useEffect(() => {
     if (localStorage.getItem(STORAGE_KEY) === "1") {
       setAccessGranted(true);
@@ -80,7 +108,6 @@ export default function Home() {
     return <AccessGate onGranted={() => setAccessGranted(true)} />;
   }
 
-  // 최소 대기 시간 보장 (UX - 너무 빨리 끝나면 가벼워 보임)
   const withMinDelay = async <T,>(promise: Promise<T>, minMs: number): Promise<T> => {
     const [result] = await Promise.all([
       promise,
@@ -96,7 +123,6 @@ export default function Home() {
     setError(null);
 
     try {
-      // 최소 8초 대기 (영상 수집 + AI 분석이 빠르게 끝나더라도)
       const data = await withMinDelay(analyzeVideos(urls), 8000);
       setAnalysisId(data.analysis_id);
       setAnalyzedVideos(data.videos);
@@ -105,7 +131,6 @@ export default function Home() {
     } catch (err) {
       console.error(err);
       const message = err instanceof Error ? err.message : "알 수 없는 오류";
-
       if (message.includes("Failed to fetch")) {
         setError("백엔드 서버에 연결할 수 없습니다. 백엔드(python app.py)가 실행 중인지 확인해주세요.");
       } else {
@@ -122,7 +147,6 @@ export default function Home() {
     setError(null);
 
     try {
-      // 최소 10초 대기 (대본 생성은 실제로도 오래 걸림)
       const data = await withMinDelay(generateContent(analysisId, topic.id), 10000);
       setGeneratedContent(data);
       setCurrentStep("result");
@@ -134,7 +158,7 @@ export default function Home() {
     }
   };
 
-  // 다시 주제 추천 받기 (백엔드 재요청)
+  // 다시 주제 추천 받기
   const handleRetryTopics = async () => {
     setIsRetrying(true);
     setError(null);
@@ -157,6 +181,54 @@ export default function Home() {
     }
   };
 
+  // Step 5: 콘텐츠 확정
+  const handleConfirm = async (confirmed: ConfirmedContent) => {
+    setConfirmedContent(confirmed);
+    setError(null);
+
+    try {
+      await confirmContent(analysisId, confirmed);
+      setCurrentStep("production");
+    } catch (err) {
+      console.error(err);
+      const message = err instanceof Error ? err.message : "알 수 없는 오류";
+      setError(`확정 중 오류: ${message}`);
+    }
+  };
+
+  // Step 6-9: 제작 시작
+  const handleStartProduction = async () => {
+    setIsProducing(true);
+    setProductionAssets(null);
+    setError(null);
+
+    try {
+      // 제작 API 호출 (폴링으로 완료 대기)
+      const assets = await startProduction(analysisId) as ProductionAssets;
+      setProductionAssets(assets);
+      setIsProducing(false);
+    } catch (err) {
+      console.error(err);
+      setIsProducing(false);
+      // 부분 에셋이라도 가져오기
+      try {
+        const project = await getProjectStatus(analysisId);
+        if (project.production_assets) {
+          setProductionAssets(project.production_assets);
+        }
+      } catch {
+        // ignore
+      }
+      const message = err instanceof Error ? err.message : "알 수 없는 오류";
+      setError(`제작 중 오류: ${message}`);
+    }
+  };
+
+  // Step 10: YouTube 업로드
+  const handleUpload = async () => {
+    return await uploadToYoutube(analysisId);
+  };
+
   // 처음부터 다시 시작
   const handleReset = () => {
     setCurrentStep("input");
@@ -165,6 +237,9 @@ export default function Home() {
     setTopics([]);
     setSelectedTopic(null);
     setGeneratedContent(null);
+    setConfirmedContent(null);
+    setProductionAssets(null);
+    setIsProducing(false);
     setAnalysisId("");
     setError(null);
     setIsRetrying(false);
@@ -224,6 +299,36 @@ export default function Home() {
             videos={analyzedVideos}
             onReset={handleReset}
             onBack={() => setCurrentStep("topics")}
+            onConfirm={() => setCurrentStep("confirm")}
+          />
+        )}
+
+        {currentStep === "confirm" && generatedContent && (
+          <ConfirmStep
+            content={generatedContent}
+            onConfirm={handleConfirm}
+            onBack={() => setCurrentStep("result")}
+          />
+        )}
+
+        {(currentStep === "production" || currentStep === "producing") && confirmedContent && (
+          <ProductionStep
+            confirmed={confirmedContent}
+            assets={productionAssets}
+            isProducing={isProducing}
+            onStartProduction={handleStartProduction}
+            onNext={() => setCurrentStep("upload")}
+            onBack={() => setCurrentStep("confirm")}
+          />
+        )}
+
+        {currentStep === "upload" && confirmedContent && productionAssets && (
+          <UploadStep
+            confirmed={confirmedContent}
+            assets={productionAssets}
+            onUpload={handleUpload}
+            onBack={() => setCurrentStep("production")}
+            onReset={handleReset}
           />
         )}
       </main>

@@ -6,12 +6,15 @@ CREATE TABLE IF NOT EXISTS projects (
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now(),
   title TEXT DEFAULT '새 프로젝트',
-  status TEXT DEFAULT 'input' CHECK (status IN ('input', 'analyzing', 'topics_ready', 'generating', 'complete')),
+  status TEXT DEFAULT 'input' CHECK (status IN ('input', 'analyzing', 'topics_ready', 'generating', 'complete', 'confirmed', 'producing', 'production_done', 'uploading', 'uploaded', 'error')),
   video_urls TEXT[] DEFAULT '{}',
   analyzed_videos JSONB DEFAULT NULL,
   topics JSONB DEFAULT NULL,
   selected_topic_id TEXT DEFAULT NULL,
-  generated_content JSONB DEFAULT NULL
+  generated_content JSONB DEFAULT NULL,
+  confirmed_content JSONB DEFAULT NULL,
+  production_assets JSONB DEFAULT NULL,
+  error_message TEXT DEFAULT NULL
 );
 
 -- updated_at 자동 갱신 트리거

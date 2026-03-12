@@ -8,6 +8,7 @@ import {
   Copy,
   Check,
   ArrowLeft,
+  ArrowRight,
   RotateCcw,
   Users,
   Sparkles,
@@ -21,9 +22,10 @@ interface ResultStepProps {
   videos: AnalyzedVideo[];
   onReset: () => void;
   onBack: () => void;
+  onConfirm?: () => void;
 }
 
-export default function ResultStep({ content, onReset, onBack }: ResultStepProps) {
+export default function ResultStep({ content, onReset, onBack, onConfirm }: ResultStepProps) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [expandedScript, setExpandedScript] = useState<string | null>(
     content.scripts[0]?.id || null
@@ -238,10 +240,18 @@ export default function ResultStep({ content, onReset, onBack }: ResultStepProps
             <ArrowLeft size={14} />
             주제 다시 선택
           </button>
-          <button onClick={onReset} className="btn-primary flex items-center gap-2">
-            <RotateCcw size={14} />
-            새 프로젝트 시작
-          </button>
+          <div className="flex items-center gap-3">
+            <button onClick={onReset} className="btn-secondary flex items-center gap-2 text-sm">
+              <RotateCcw size={14} />
+              처음부터
+            </button>
+            {onConfirm && (
+              <button onClick={onConfirm} className="btn-primary flex items-center gap-2">
+                확정하고 제작하기
+                <ArrowRight size={14} />
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>

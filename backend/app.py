@@ -2,9 +2,13 @@ import os
 import re
 import uuid
 import json
+import asyncio
 import threading
+import tempfile
+import subprocess
+import shutil
 from datetime import datetime
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from pathlib import Path
 from dotenv import load_dotenv
@@ -22,6 +26,10 @@ else:
 
 app = Flask(__name__)
 CORS(app, origins=["*"])
+
+# 제작 파일 저장 디렉토리
+ASSETS_DIR = Path(__file__).parent / "assets"
+ASSETS_DIR.mkdir(exist_ok=True)
 
 # ============================================================
 # 외부 서비스 클라이언트
@@ -96,6 +104,8 @@ def db_get_project(project_id: str):
                 "topics": json.loads(row["topics"]) if row.get("topics") else [],
                 "selected_topic_id": row.get("selected_topic_id"),
                 "generated_content": json.loads(row["generated_content"]) if row.get("generated_content") else None,
+                "confirmed_content": json.loads(row["confirmed_content"]) if row.get("confirmed_content") else None,
+                "production_assets": json.loads(row["production_assets"]) if row.get("production_assets") else None,
                 "error_message": row.get("error_message"),
                 "created_at": row.get("created_at"),
             }
@@ -118,6 +128,10 @@ def db_update_project(project_id: str, updates: dict):
             row["selected_topic_id"] = updates["selected_topic_id"]
         if "generated_content" in updates:
             row["generated_content"] = json.dumps(updates["generated_content"], ensure_ascii=False)
+        if "confirmed_content" in updates:
+            row["confirmed_content"] = json.dumps(updates["confirmed_content"], ensure_ascii=False)
+        if "production_assets" in updates:
+            row["production_assets"] = json.dumps(updates["production_assets"], ensure_ascii=False)
         if row:
             supabase_client.table("projects").update(row).eq("id", project_id).execute()
         # error_message 컬럼이 없을 수 있으므로 별도 처리
@@ -248,15 +262,10 @@ def get_transcript(video_id: str) -> str:
 
 
 def calc_view_ratios(videos: list) -> list[dict]:
-    """최근 영상 대비 조회수 비율 계산
-
-    요구사항: '제일 최근꺼 대비 조회수 높은거 순서'
-    → 가장 최근 업로드된 영상의 조회수를 기준(1.0)으로 나머지 영상의 비율 산출
-    """
+    """최근 영상 대비 조회수 비율 계산"""
     if not videos:
         return videos
 
-    # publishedAt 기준 가장 최근 영상 찾기
     sorted_by_date = sorted(
         videos,
         key=lambda v: v.get("publishedAt", ""),
@@ -267,7 +276,6 @@ def calc_view_ratios(videos: list) -> list[dict]:
     for v in videos:
         v["viewRatio"] = round(v["viewCount"] / latest_views, 2)
 
-    # 조회수 높은 순 정렬
     videos.sort(key=lambda x: x["viewCount"], reverse=True)
     return videos
 
@@ -282,7 +290,6 @@ def analyze_with_ai(videos: list, exclude_topics = None) -> list[dict]:
     if not anthropic_client:
         return _fallback_analyze(videos)
 
-    # 영상 데이터를 프롬프트용으로 정리
     video_summaries = []
     for i, v in enumerate(videos, 1):
         transcript_preview = v.get("transcript", "")[:1500]
@@ -339,14 +346,12 @@ def analyze_with_ai(videos: list, exclude_topics = None) -> list[dict]:
 
         response_text = message.content[0].text.strip()
 
-        # JSON 파싱 (마크다운 코드블록 제거)
         if response_text.startswith("```"):
             response_text = re.sub(r"^```(?:json)?\s*", "", response_text)
             response_text = re.sub(r"\s*```$", "", response_text)
 
         topics = json.loads(response_text)
 
-        # ID 부여
         for t in topics:
             t["id"] = str(uuid.uuid4())
 
@@ -463,7 +468,6 @@ def generate_with_ai(topic: dict, videos: list) -> dict:
 
         result = json.loads(response_text)
 
-        # scripts에 id와 fullScript 추가
         for script in result.get("scripts", []):
             script["id"] = str(uuid.uuid4())
             script["fullScript"] = f"[인트로]\n{script['intro']}\n\n[본문]\n{script['body']}"
@@ -539,6 +543,400 @@ def _fallback_generate(topic: dict) -> dict:
 
 
 # ============================================================
+# 제작 기능 (썸네일, PPT, TTS, 영상)
+# ============================================================
+
+def generate_thumbnail_image(text: str, project_id: str) -> str:
+    """Pillow로 썸네일 이미지 생성 (1280x720)"""
+    from PIL import Image, ImageDraw, ImageFont
+
+    width, height = 1280, 720
+    img = Image.new("RGB", (width, height))
+
+    # 그라디언트 배경 생성
+    draw = ImageDraw.Draw(img)
+    for y in range(height):
+        r = int(20 + (y / height) * 30)
+        g = int(10 + (y / height) * 15)
+        b = int(40 + (y / height) * 60)
+        draw.line([(0, y), (width, y)], fill=(r, g, b))
+
+    # 중앙에 강조 원형 그라디언트 효과
+    for i in range(200, 0, -1):
+        alpha = int(255 * (i / 200) * 0.15)
+        x0 = width // 2 - i * 3
+        y0 = height // 2 - i * 2
+        x1 = width // 2 + i * 3
+        y1 = height // 2 + i * 2
+        draw.ellipse([x0, y0, x1, y1], fill=(255, 59, 92, alpha) if img.mode == "RGBA" else (min(255, 20 + alpha // 3), 10, min(255, 40 + alpha // 4)))
+
+    # 다시 그리기 (깨끗한 배경)
+    img = Image.new("RGB", (width, height))
+    draw = ImageDraw.Draw(img)
+
+    # 그라디언트 배경
+    for y in range(height):
+        ratio = y / height
+        r = int(15 + ratio * 25)
+        g = int(5 + ratio * 15)
+        b = int(35 + ratio * 55)
+        draw.line([(0, y), (width, y)], fill=(r, g, b))
+
+    # 하단 악센트 바
+    draw.rectangle([0, height - 8, width, height], fill=(255, 59, 92))
+
+    # 폰트 설정 (시스템 폰트 폴백)
+    font_size = 80
+    font = None
+    font_paths = [
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    ]
+    for fp in font_paths:
+        if os.path.exists(fp):
+            try:
+                font = ImageFont.truetype(fp, font_size)
+                break
+            except Exception:
+                continue
+
+    if font is None:
+        font = ImageFont.load_default()
+
+    # 텍스트 크기 측정 및 줄바꿈
+    lines = []
+    current_line = ""
+    for char in text:
+        test_line = current_line + char
+        bbox = draw.textbbox((0, 0), test_line, font=font)
+        if bbox[2] - bbox[0] > width - 160:
+            lines.append(current_line)
+            current_line = char
+        else:
+            current_line = test_line
+    if current_line:
+        lines.append(current_line)
+
+    # 텍스트 중앙 배치
+    line_height = font_size + 20
+    total_height = len(lines) * line_height
+    y_start = (height - total_height) // 2
+
+    for i, line in enumerate(lines):
+        bbox = draw.textbbox((0, 0), line, font=font)
+        text_width = bbox[2] - bbox[0]
+        x = (width - text_width) // 2
+        y = y_start + i * line_height
+
+        # 텍스트 그림자
+        draw.text((x + 3, y + 3), line, fill=(0, 0, 0), font=font)
+        # 메인 텍스트
+        draw.text((x, y), line, fill=(255, 255, 255), font=font)
+
+    # 저장
+    filename = f"thumbnail_{project_id}.png"
+    filepath = ASSETS_DIR / filename
+    img.save(str(filepath), "PNG")
+    print(f"[썸네일] 생성 완료: {filepath}")
+    return filename
+
+
+def generate_ppt(title: str, script: dict, project_id: str) -> str:
+    """python-pptx로 PPT 생성"""
+    from pptx import Presentation
+    from pptx.util import Inches, Pt, Emu
+    from pptx.dml.color import RGBColor
+    from pptx.enum.text import PP_ALIGN
+
+    prs = Presentation()
+    prs.slide_width = Emu(12192000)  # 16:9
+    prs.slide_height = Emu(6858000)
+
+    def add_bg(slide, r=15, g=15, b=25):
+        background = slide.background
+        fill = background.fill
+        fill.solid()
+        fill.fore_color.rgb = RGBColor(r, g, b)
+
+    def add_text_box(slide, left, top, width, height, text, font_size=18, bold=False, color=(240, 240, 245), alignment=PP_ALIGN.LEFT):
+        txBox = slide.shapes.add_textbox(left, top, width, height)
+        tf = txBox.text_frame
+        tf.word_wrap = True
+        p = tf.paragraphs[0]
+        p.text = text
+        p.font.size = Pt(font_size)
+        p.font.bold = bold
+        p.font.color.rgb = RGBColor(*color)
+        p.alignment = alignment
+        return txBox
+
+    # 1. 표지 슬라이드
+    slide = prs.slides.add_slide(prs.slide_layouts[6])  # Blank
+    add_bg(slide)
+    add_text_box(slide, Inches(1), Inches(2), Inches(8), Inches(2),
+                 title, font_size=36, bold=True, color=(255, 255, 255),
+                 alignment=PP_ALIGN.CENTER)
+    add_text_box(slide, Inches(1), Inches(4.2), Inches(8), Inches(0.8),
+                 script.get("targetDescription", ""), font_size=16,
+                 color=(136, 136, 160), alignment=PP_ALIGN.CENTER)
+
+    # 2. 인트로 슬라이드
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    add_bg(slide)
+    add_text_box(slide, Inches(0.8), Inches(0.5), Inches(8.4), Inches(0.8),
+                 "INTRO", font_size=14, bold=True, color=(255, 59, 92))
+    # 인트로 텍스트를 적절히 나누기
+    intro_text = script.get("intro", "")
+    add_text_box(slide, Inches(0.8), Inches(1.2), Inches(8.4), Inches(5),
+                 intro_text, font_size=16, color=(220, 220, 230))
+
+    # 3. 본문 섹션 슬라이드
+    body = script.get("body", "")
+    sections = re.split(r'\[섹션\s*\d+[:\s]*([^\]]*)\]', body)
+
+    # sections[0]은 첫 번째 섹션 마커 이전의 텍스트 (보통 빈 문자열)
+    # sections[1]은 섹션 제목, sections[2]은 섹션 내용, ...
+    section_pairs = []
+    i = 1
+    while i < len(sections) - 1:
+        section_title = sections[i].strip()
+        section_content = sections[i + 1].strip()
+        if section_title or section_content:
+            section_pairs.append((section_title, section_content))
+        i += 2
+
+    # 섹션이 파싱되지 않으면 전체 본문을 하나의 슬라이드로
+    if not section_pairs:
+        section_pairs = [("본문", body)]
+
+    for idx, (sec_title, sec_content) in enumerate(section_pairs, 1):
+        slide = prs.slides.add_slide(prs.slide_layouts[6])
+        add_bg(slide)
+
+        # 섹션 번호 + 제목
+        add_text_box(slide, Inches(0.8), Inches(0.4), Inches(8.4), Inches(0.6),
+                     f"SECTION {idx}", font_size=12, bold=True, color=(255, 59, 92))
+        add_text_box(slide, Inches(0.8), Inches(0.9), Inches(8.4), Inches(0.8),
+                     sec_title if sec_title else f"섹션 {idx}", font_size=24, bold=True,
+                     color=(255, 255, 255))
+
+        # 섹션 내용 (글자 수가 많으면 여러 슬라이드로 분할)
+        max_chars = 600
+        content_chunks = [sec_content[j:j+max_chars] for j in range(0, len(sec_content), max_chars)]
+
+        # 첫 청크는 현재 슬라이드에
+        if content_chunks:
+            add_text_box(slide, Inches(0.8), Inches(1.8), Inches(8.4), Inches(4.5),
+                         content_chunks[0], font_size=14, color=(200, 200, 215))
+
+        # 나머지 청크는 추가 슬라이드
+        for chunk in content_chunks[1:]:
+            extra_slide = prs.slides.add_slide(prs.slide_layouts[6])
+            add_bg(extra_slide)
+            add_text_box(extra_slide, Inches(0.8), Inches(0.4), Inches(8.4), Inches(0.6),
+                         f"SECTION {idx} (계속)", font_size=12, bold=True, color=(255, 59, 92))
+            add_text_box(extra_slide, Inches(0.8), Inches(1.2), Inches(8.4), Inches(5),
+                         chunk, font_size=14, color=(200, 200, 215))
+
+    # 4. 아웃트로 슬라이드
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    add_bg(slide)
+    add_text_box(slide, Inches(1), Inches(2.5), Inches(8), Inches(1),
+                 "시청해주셔서 감사합니다", font_size=32, bold=True,
+                 color=(255, 255, 255), alignment=PP_ALIGN.CENTER)
+    add_text_box(slide, Inches(1), Inches(3.8), Inches(8), Inches(0.8),
+                 "좋아요 & 구독 부탁드립니다!", font_size=18,
+                 color=(255, 59, 92), alignment=PP_ALIGN.CENTER)
+
+    # 저장
+    filename = f"presentation_{project_id}.pptx"
+    filepath = ASSETS_DIR / filename
+    prs.save(str(filepath))
+    print(f"[PPT] 생성 완료: {filepath}")
+    return filename
+
+
+def generate_tts(script: dict, project_id: str) -> str:
+    """Edge TTS로 음성 생성"""
+    import edge_tts
+
+    full_text = script.get("fullScript", "")
+    if not full_text:
+        full_text = f"{script.get('intro', '')}\n\n{script.get('body', '')}"
+
+    # 대본 정리: 섹션 마커 제거, 자연스러운 읽기용으로 변환
+    clean_text = re.sub(r'\[섹션\s*\d+[:\s]*[^\]]*\]', '', full_text)
+    clean_text = re.sub(r'\[인트로\]|\[본문\]', '', clean_text)
+    clean_text = clean_text.strip()
+
+    filename = f"tts_{project_id}.mp3"
+    filepath = ASSETS_DIR / filename
+
+    async def _generate():
+        communicate = edge_tts.Communicate(clean_text, "ko-KR-SunHiNeural")
+        await communicate.save(str(filepath))
+
+    asyncio.run(_generate())
+    print(f"[TTS] 생성 완료: {filepath}")
+    return filename
+
+
+def generate_video(project_id: str, ppt_filename: str, tts_filename: str) -> str:
+    """FFmpeg로 PPT 슬라이드 + TTS 음성 → 영상 합성"""
+    ppt_path = ASSETS_DIR / ppt_filename
+    tts_path = ASSETS_DIR / tts_filename
+
+    # 임시 디렉토리에 슬라이드를 이미지로 변환
+    slides_dir = ASSETS_DIR / f"slides_{project_id}"
+    slides_dir.mkdir(exist_ok=True)
+
+    try:
+        # PPT → 이미지 변환 (LibreOffice 또는 python-pptx + Pillow 폴백)
+        slide_images = _ppt_to_images(str(ppt_path), str(slides_dir))
+
+        if not slide_images:
+            raise Exception("슬라이드 이미지 변환 실패")
+
+        # TTS 오디오 길이 측정 (ffprobe)
+        audio_duration = _get_audio_duration(str(tts_path))
+        if audio_duration <= 0:
+            audio_duration = 60  # 기본값
+
+        # 슬라이드당 표시 시간 계산
+        slide_duration = audio_duration / len(slide_images)
+        slide_duration = max(slide_duration, 3)  # 최소 3초
+
+        # FFmpeg로 영상 합성
+        video_filename = f"video_{project_id}.mp4"
+        video_path = ASSETS_DIR / video_filename
+
+        # 슬라이드 리스트 파일 생성
+        concat_file = slides_dir / "concat.txt"
+        with open(concat_file, "w") as f:
+            for img_path in slide_images:
+                f.write(f"file '{img_path}'\n")
+                f.write(f"duration {slide_duration}\n")
+            # 마지막 이미지 반복 (FFmpeg concat 요구사항)
+            f.write(f"file '{slide_images[-1]}'\n")
+
+        # FFmpeg 실행
+        cmd = [
+            "ffmpeg", "-y",
+            "-f", "concat", "-safe", "0", "-i", str(concat_file),
+            "-i", str(tts_path),
+            "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:color=black",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            "-c:a", "aac", "-b:a", "128k",
+            "-shortest",
+            "-pix_fmt", "yuv420p",
+            str(video_path),
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        if result.returncode != 0:
+            print(f"[FFmpeg 오류] {result.stderr[:500]}")
+            raise Exception(f"FFmpeg 오류: {result.stderr[:200]}")
+
+        print(f"[영상] 생성 완료: {video_path}")
+        return video_filename
+
+    finally:
+        # 임시 슬라이드 이미지 정리
+        if slides_dir.exists():
+            shutil.rmtree(slides_dir, ignore_errors=True)
+
+
+def _ppt_to_images(ppt_path: str, output_dir: str) -> list[str]:
+    """PPT를 이미지로 변환"""
+    # 방법 1: LibreOffice 사용
+    try:
+        result = subprocess.run(
+            ["libreoffice", "--headless", "--convert-to", "png", "--outdir", output_dir, ppt_path],
+            capture_output=True, text=True, timeout=120
+        )
+        if result.returncode == 0:
+            images = sorted(Path(output_dir).glob("*.png"))
+            if images:
+                return [str(img) for img in images]
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    # 방법 2: python-pptx + Pillow로 직접 렌더링 (간단한 텍스트 슬라이드)
+    print("[변환] LibreOffice 없음 - Pillow로 직접 슬라이드 이미지 생성")
+    from pptx import Presentation
+    from PIL import Image, ImageDraw, ImageFont
+
+    prs = Presentation(ppt_path)
+    images = []
+
+    font = None
+    font_paths = [
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ]
+    for fp in font_paths:
+        if os.path.exists(fp):
+            try:
+                font = ImageFont.truetype(fp, 24)
+                break
+            except Exception:
+                continue
+
+    for idx, slide in enumerate(prs.slides):
+        img = Image.new("RGB", (1280, 720), (15, 15, 25))
+        draw = ImageDraw.Draw(img)
+
+        y_pos = 40
+        for shape in slide.shapes:
+            if shape.has_text_frame:
+                for paragraph in shape.text_frame.paragraphs:
+                    text = paragraph.text.strip()
+                    if not text:
+                        continue
+
+                    # 텍스트 줄바꿈 처리
+                    used_font = font if font else ImageFont.load_default()
+                    words = list(text)
+                    current_line = ""
+                    for char in words:
+                        test = current_line + char
+                        bbox = draw.textbbox((0, 0), test, font=used_font)
+                        if bbox[2] - bbox[0] > 1200:
+                            draw.text((40, y_pos), current_line, fill=(220, 220, 230), font=used_font)
+                            y_pos += 32
+                            current_line = char
+                        else:
+                            current_line = test
+                    if current_line:
+                        draw.text((40, y_pos), current_line, fill=(220, 220, 230), font=used_font)
+                        y_pos += 32
+
+                    y_pos += 8
+
+        img_path = os.path.join(output_dir, f"slide_{idx:03d}.png")
+        img.save(img_path)
+        images.append(img_path)
+
+    return images
+
+
+def _get_audio_duration(audio_path: str) -> float:
+    """오디오 파일의 길이(초) 반환"""
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", audio_path],
+            capture_output=True, text=True, timeout=30
+        )
+        return float(result.stdout.strip())
+    except Exception:
+        return 0
+
+
+# ============================================================
 # API 엔드포인트
 # ============================================================
 
@@ -561,17 +959,14 @@ def _is_valid_video(item):
     snippet = item.get("snippet", {})
     content = item.get("contentDetails", {})
 
-    # 1. 쇼츠 제외: 60초 이하
     duration_sec = _parse_duration_seconds(content.get("duration", "PT0S"))
     if duration_sec <= 60:
         return False
 
-    # 2. 뉴스 채널 제외
     channel_title = snippet.get("channelTitle", "")
     if any(kw.lower() in channel_title.lower() for kw in NEWS_CHANNEL_KEYWORDS):
         return False
 
-    # 3. 해외 영상 제외: 기본 언어가 한국어가 아닌 경우
     lang = snippet.get("defaultAudioLanguage") or snippet.get("defaultLanguage") or ""
     if lang and not lang.startswith("ko"):
         return False
@@ -590,7 +985,6 @@ def recommend():
         from googleapiclient.discovery import build
         youtube = build("youtube", "v3", developerKey=api_key)
 
-        # 검색 키워드 (랜덤으로 다양하게)
         import random
         queries = [
             "AI 유튜브 자동화",
@@ -616,7 +1010,6 @@ def recommend():
 
         items = response.get("items", [])
 
-        # video ID 목록으로 상세 정보 조회
         video_ids = [item["id"]["videoId"] for item in items if item["id"].get("videoId")]
         if not video_ids:
             return jsonify({"videos": []})
@@ -643,7 +1036,6 @@ def recommend():
                 "url": f"https://www.youtube.com/watch?v={vid}",
             })
 
-        # 조회수 높은 순 5개
         videos.sort(key=lambda x: x["viewCount"], reverse=True)
         return jsonify({"videos": videos[:5], "query": query})
 
@@ -659,8 +1051,8 @@ def recommend_custom():
     if not api_key:
         return jsonify({"error": "YOUTUBE_API_KEY가 설정되지 않았습니다"}), 500
 
-    keywords = request.args.getlist("keywords")  # ?keywords=AI&keywords=유튜브자동화
-    channel_ids = request.args.getlist("channelIds")  # ?channelIds=UCxxx&channelIds=UCyyy
+    keywords = request.args.getlist("keywords")
+    channel_ids = request.args.getlist("channelIds")
 
     if not keywords and not channel_ids:
         return jsonify({"error": "keywords 또는 channelIds 필요"}), 400
@@ -672,7 +1064,6 @@ def recommend_custom():
 
         all_videos = []
 
-        # 키워드 검색
         if keywords:
             query = random.choice(keywords)
             response = youtube.search().list(
@@ -706,12 +1097,10 @@ def recommend_custom():
                         "sourceLabel": query,
                     })
 
-        # 채널 최신 영상 + 유사 영상 탐색
         if channel_ids:
-            channel_tags = []  # 채널들의 태그 수집
+            channel_tags = []
 
             for channel_id in channel_ids[:5]:
-                # 채널 최신 영상 3개
                 response = youtube.search().list(
                     part="snippet",
                     channelId=channel_id,
@@ -739,14 +1128,11 @@ def recommend_custom():
                             "source": "channel",
                             "sourceLabel": snippet.get("channelTitle", ""),
                         })
-                        # 태그 수집
                         tags = snippet.get("tags", [])
                         channel_tags.extend(tags[:5])
 
-            # 수집된 태그로 유사 영상 검색
             if channel_tags:
                 import random
-                # 태그 중 랜덤 하나로 유사 영상 검색
                 similar_query = random.choice(channel_tags)
                 sim_response = youtube.search().list(
                     part="snippet",
@@ -759,7 +1145,6 @@ def recommend_custom():
                     publishedAfter=datetime.now().strftime("%Y-%m-01T00:00:00Z"),
                 ).execute()
                 sim_video_ids = [item["id"]["videoId"] for item in sim_response.get("items", []) if item["id"].get("videoId")]
-                # 등록된 채널 영상은 제외
                 registered_channel_ids = set(channel_ids)
                 if sim_video_ids:
                     sim_detail = youtube.videos().list(part="snippet,statistics,contentDetails", id=",".join(sim_video_ids[:10])).execute()
@@ -767,7 +1152,6 @@ def recommend_custom():
                         if not _is_valid_video(item):
                             continue
                         snippet = item["snippet"]
-                        # 등록 채널 영상은 이미 위에서 추가했으니 스킵
                         if snippet.get("channelId") in registered_channel_ids:
                             continue
                         stats = item.get("statistics", {})
@@ -784,7 +1168,6 @@ def recommend_custom():
                             "sourceLabel": similar_query,
                         })
 
-        # 중복 제거, 조회수 순 정렬, 최대 5개
         seen = set()
         unique = []
         for v in all_videos:
@@ -805,7 +1188,6 @@ def channel_info():
     api_key = os.getenv("YOUTUBE_API_KEY")
     video_url = request.args.get("url", "")
 
-    # 영상 ID 추출
     import re
     match = re.search(r"(?:v=|youtu\.be/)([a-zA-Z0-9_-]{11})", video_url)
     if not match:
@@ -886,14 +1268,13 @@ def _do_analyze(analysis_id: str, video_urls: list):
 
 @app.route("/api/analyze", methods=["POST"])
 def analyze():
-    """영상 분석 API (비동기 - 즉시 응답 후 백그라운드 처리)"""
+    """영상 분석 API (비동기)"""
     data = request.get_json()
     video_urls = data.get("video_urls", [])
 
     if len(video_urls) < 3:
         return jsonify({"error": "최소 3개의 영상 URL이 필요합니다"}), 400
 
-    # 프로젝트 즉시 생성 (analyzing 상태)
     analysis_id = str(uuid.uuid4())
     project = {
         "id": analysis_id,
@@ -905,7 +1286,6 @@ def analyze():
     }
     db_save_project(project)
 
-    # 백그라운드에서 분석 시작
     thread = threading.Thread(target=_do_analyze, args=(analysis_id, video_urls))
     thread.daemon = True
     thread.start()
@@ -927,13 +1307,10 @@ def retry_topics():
     if not project:
         return jsonify({"error": "프로젝트를 찾을 수 없습니다"}), 404
 
-    # 이전 추천 주제명 추출 (중복 방지)
     exclude_topics = [t.get("topic", "") for t in previous_topics if t.get("topic")]
 
-    # AI로 새로운 주제 추천 (이전 주제 제외)
     new_topics = analyze_with_ai(project["videos"], exclude_topics=exclude_topics)
 
-    # DB 업데이트
     db_update_project(analysis_id, {
         "topics": new_topics,
         "status": "topics_ready",
@@ -973,7 +1350,7 @@ def _do_generate(analysis_id: str, selected_topic: dict, videos: list, selected_
 
 @app.route("/api/generate", methods=["POST"])
 def generate():
-    """콘텐츠 생성 API (비동기 - 즉시 응답 후 백그라운드 처리)"""
+    """콘텐츠 생성 API (비동기)"""
     data = request.get_json()
     analysis_id = data.get("analysis_id")
     selected_topic_id = data.get("selected_topic_id")
@@ -982,7 +1359,6 @@ def generate():
     if not project:
         return jsonify({"error": "프로젝트를 찾을 수 없습니다"}), 404
 
-    # 선택된 주제 찾기
     selected_topic = None
     for topic in project["topics"]:
         if topic["id"] == selected_topic_id:
@@ -992,10 +1368,8 @@ def generate():
     if not selected_topic:
         return jsonify({"error": "선택된 주제를 찾을 수 없습니다"}), 404
 
-    # 상태를 generating으로 업데이트
     db_update_project(analysis_id, {"status": "generating"})
 
-    # 백그라운드에서 생성 시작
     thread = threading.Thread(
         target=_do_generate,
         args=(analysis_id, selected_topic, project["videos"], selected_topic_id),
@@ -1004,6 +1378,171 @@ def generate():
     thread.start()
 
     return jsonify({"status": "generating", "analysis_id": analysis_id})
+
+
+# ============================================================
+# 제작 API 엔드포인트 (Steps 5-10)
+# ============================================================
+
+@app.route("/api/confirm", methods=["POST"])
+def confirm_content():
+    """콘텐츠 확정 API (Step 5)"""
+    data = request.get_json()
+    analysis_id = data.get("analysis_id")
+    confirmed = data.get("confirmed_content")
+
+    if not analysis_id or not confirmed:
+        return jsonify({"error": "analysis_id와 confirmed_content 필요"}), 400
+
+    project = db_get_project(analysis_id)
+    if not project:
+        return jsonify({"error": "프로젝트를 찾을 수 없습니다"}), 404
+
+    db_update_project(analysis_id, {
+        "status": "confirmed",
+        "confirmed_content": confirmed,
+    })
+
+    return jsonify({"status": "confirmed", "analysis_id": analysis_id})
+
+
+def _do_produce(analysis_id: str, confirmed: dict):
+    """백그라운드에서 전체 제작 수행 (썸네일 → PPT → TTS → 영상)"""
+    assets = {
+        "thumbnailUrl": None,
+        "pptUrl": None,
+        "ttsUrl": None,
+        "videoUrl": None,
+    }
+
+    try:
+        # 1. 썸네일 생성
+        print(f"[제작] {analysis_id} - 썸네일 생성 중...")
+        thumb_file = generate_thumbnail_image(
+            confirmed.get("thumbnailText", "썸네일"),
+            analysis_id
+        )
+        assets["thumbnailUrl"] = f"/api/assets/{thumb_file}"
+        db_update_project(analysis_id, {"production_assets": assets})
+
+        # 2. PPT 생성
+        print(f"[제작] {analysis_id} - PPT 생성 중...")
+        script = confirmed.get("script", {})
+        ppt_file = generate_ppt(
+            confirmed.get("title", "제목 없음"),
+            script,
+            analysis_id
+        )
+        assets["pptUrl"] = f"/api/assets/{ppt_file}"
+        db_update_project(analysis_id, {"production_assets": assets})
+
+        # 3. TTS 생성
+        print(f"[제작] {analysis_id} - TTS 생성 중...")
+        tts_file = generate_tts(script, analysis_id)
+        assets["ttsUrl"] = f"/api/assets/{tts_file}"
+        db_update_project(analysis_id, {"production_assets": assets})
+
+        # 4. 영상 합성
+        print(f"[제작] {analysis_id} - 영상 합성 중...")
+        try:
+            video_file = generate_video(analysis_id, ppt_file, tts_file)
+            assets["videoUrl"] = f"/api/assets/{video_file}"
+        except Exception as ve:
+            print(f"[영상 합성 경고] {ve} - FFmpeg 미설치일 수 있음")
+            assets["videoUrl"] = None
+
+        db_update_project(analysis_id, {
+            "status": "production_done",
+            "production_assets": assets,
+        })
+        print(f"[제작 완료] {analysis_id}")
+
+    except Exception as e:
+        print(f"[제작 오류] {analysis_id}: {e}")
+        # 부분 에셋이라도 저장
+        db_update_project(analysis_id, {
+            "status": "production_done",
+            "production_assets": assets,
+            "error_message": str(e),
+        })
+
+
+@app.route("/api/produce", methods=["POST"])
+def produce():
+    """제작 시작 API (Step 6-9, 비동기)"""
+    data = request.get_json()
+    analysis_id = data.get("analysis_id")
+
+    project = db_get_project(analysis_id)
+    if not project:
+        return jsonify({"error": "프로젝트를 찾을 수 없습니다"}), 404
+
+    confirmed = project.get("confirmed_content")
+    if not confirmed:
+        return jsonify({"error": "확정된 콘텐츠가 없습니다. 먼저 /api/confirm을 호출하세요"}), 400
+
+    db_update_project(analysis_id, {
+        "status": "producing",
+        "production_assets": {
+            "thumbnailUrl": None,
+            "pptUrl": None,
+            "ttsUrl": None,
+            "videoUrl": None,
+        },
+    })
+
+    thread = threading.Thread(target=_do_produce, args=(analysis_id, confirmed))
+    thread.daemon = True
+    thread.start()
+
+    return jsonify({"status": "producing", "analysis_id": analysis_id})
+
+
+@app.route("/api/assets/<filename>", methods=["GET"])
+def serve_asset(filename):
+    """제작된 에셋 파일 서빙"""
+    # 경로 조작 방지
+    safe_name = os.path.basename(filename)
+    filepath = ASSETS_DIR / safe_name
+
+    if not filepath.exists():
+        return jsonify({"error": "파일을 찾을 수 없습니다"}), 404
+
+    return send_file(str(filepath))
+
+
+@app.route("/api/upload-youtube", methods=["POST"])
+def upload_youtube():
+    """YouTube 업로드 API (Step 10)
+
+    참고: 실제 YouTube 업로드는 OAuth 2.0 인증이 필요합니다.
+    현재는 업로드 준비 상태만 반환합니다.
+    """
+    data = request.get_json()
+    analysis_id = data.get("analysis_id")
+
+    project = db_get_project(analysis_id)
+    if not project:
+        return jsonify({"error": "프로젝트를 찾을 수 없습니다"}), 404
+
+    assets = project.get("production_assets", {})
+    confirmed = project.get("confirmed_content", {})
+
+    if not assets or not assets.get("videoUrl"):
+        return jsonify({"error": "업로드할 영상이 없습니다. 먼저 제작을 완료해주세요"}), 400
+
+    # YouTube OAuth 토큰 확인
+    # 현재는 OAuth가 구현되지 않았으므로 안내 메시지 반환
+    return jsonify({
+        "status": "ready",
+        "message": "YouTube 업로드를 위해서는 Google OAuth 인증이 필요합니다. 설정 페이지에서 Google 계정을 연동해주세요.",
+        "upload_data": {
+            "title": confirmed.get("title", ""),
+            "description": f"주제: {confirmed.get('topic', {}).get('topic', '')}\n\n이 영상은 AI 도구로 제작되었습니다.",
+            "video_file": assets.get("videoUrl", ""),
+            "thumbnail_file": assets.get("thumbnailUrl", ""),
+        },
+    })
 
 
 @app.route("/api/project/<project_id>", methods=["GET"])

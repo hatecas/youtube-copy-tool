@@ -23,7 +23,7 @@ export interface AnalysisResult {
   createdAt: string;
   videos: AnalyzedVideo[];
   topics: TopicSuggestion[];
-  status: "analyzing" | "topics_ready" | "generating" | "complete";
+  status: ProjectStatus;
 }
 
 // 주제 추천
@@ -54,16 +54,56 @@ export interface ScriptVariant {
   fullScript: string;
 }
 
+// 확정된 콘텐츠 (Step 5)
+export interface ConfirmedContent {
+  title: string;
+  thumbnailText: string;
+  script: ScriptVariant;
+  topic: TopicSuggestion;
+}
+
+// 제작 에셋 (Steps 6-9)
+export interface ProductionAssets {
+  thumbnailUrl: string | null;    // 썸네일 이미지 URL
+  pptUrl: string | null;          // PPT 다운로드 URL
+  ttsUrl: string | null;          // TTS 음성 URL
+  videoUrl: string | null;        // 최종 영상 URL
+}
+
+// 제작 진행 상태
+export interface ProductionProgress {
+  thumbnail: "pending" | "processing" | "done" | "error";
+  ppt: "pending" | "processing" | "done" | "error";
+  tts: "pending" | "processing" | "done" | "error";
+  video: "pending" | "processing" | "done" | "error";
+}
+
+// 프로젝트 상태
+export type ProjectStatus =
+  | "input"
+  | "analyzing"
+  | "topics_ready"
+  | "generating"
+  | "complete"
+  | "confirmed"
+  | "producing"
+  | "production_done"
+  | "uploading"
+  | "uploaded"
+  | "error";
+
 // 프로젝트 (Supabase에 저장)
 export interface Project {
   id: string;
   created_at: string;
   updated_at: string;
   title: string;
-  status: "input" | "analyzing" | "topics_ready" | "generating" | "complete";
+  status: ProjectStatus;
   video_urls: string[];
   analyzed_videos: AnalyzedVideo[] | null;
   topics: TopicSuggestion[] | null;
   selected_topic_id: string | null;
   generated_content: GeneratedContent | null;
+  confirmed_content: ConfirmedContent | null;
+  production_assets: ProductionAssets | null;
 }
