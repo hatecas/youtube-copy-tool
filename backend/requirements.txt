@@ -10,7 +10,7 @@ anthropic==0.52.0
 isodate
 Pillow==11.1.0
 python-pptx==1.0.2
-edge-tts==6.1.9
+edge-tts>=7.0.0
 google-auth==2.38.0
 google-auth-oauthlib==1.2.1
 google-auth-httplib2==0.2.0
