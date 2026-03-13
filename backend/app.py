@@ -229,32 +229,17 @@ def get_transcript(video_id: str) -> str:
     try:
         from youtube_transcript_api import YouTubeTranscriptApi
 
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-
-        transcript = None
-        for lang in ["ko", "en"]:
-            try:
-                transcript = transcript_list.find_transcript([lang])
-                break
-            except Exception:
-                continue
-
-        if not transcript:
-            transcript = transcript_list.find_generated_transcript(["ko", "en"])
-
-        if not transcript:
-            return "자막을 찾을 수 없습니다."
-
-        fetched = transcript.fetch()
+        ytt_api = YouTubeTranscriptApi()
+        transcript_list = ytt_api.fetch(video_id, languages=["ko", "en"])
 
         # 첫 5분(300초)까지만 추출
         texts = []
-        for entry in fetched:
-            if entry["start"] > 300:
+        for entry in transcript_list:
+            if entry.start > 300:
                 break
-            texts.append(entry["text"])
+            texts.append(entry.text)
 
-        return " ".join(texts)
+        return " ".join(texts) if texts else "자막을 찾을 수 없습니다."
 
     except Exception as e:
         print(f"자막 추출 오류 ({video_id}): {e}")
