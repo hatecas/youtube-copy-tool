@@ -857,18 +857,21 @@ def _ppt_to_images(ppt_path: str, output_dir: str) -> list[str]:
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
 
-    # 방법 2: python-pptx + Pillow로 직접 렌더링 (간단한 텍스트 슬라이드)
+    # 방법 2: python-pptx + Pillow로 직접 렌더링
     print("[변환] LibreOffice 없음 - Pillow로 직접 슬라이드 이미지 생성")
     from pptx import Presentation
+    from pptx.util import Pt
     from PIL import Image, ImageDraw, ImageFont
 
     prs = Presentation(ppt_path)
     images = []
 
-    font = None
+    # 폰트 파일 찾기
+    font_file = None
     font_paths = [
         # Windows 한국어 폰트
         "C:/Windows/Fonts/malgun.ttf",      # 맑은 고딕
+        "C:/Windows/Fonts/malgunbd.ttf",    # 맑은 고딕 Bold
         "C:/Windows/Fonts/gulim.ttc",       # 굴림
         "C:/Windows/Fonts/batang.ttc",      # 바탕
         "C:/Windows/Fonts/arial.ttf",       # Arial (폴백)
@@ -881,47 +884,125 @@ def _ppt_to_images(ppt_path: str, output_dir: str) -> list[str]:
     ]
     for fp in font_paths:
         if os.path.exists(fp):
-            try:
-                font = ImageFont.truetype(fp, 24)
-                break
-            except Exception:
-                continue
+            font_file = fp
+            break
+
+    # Bold 폰트 파일 (Windows)
+    bold_font_file = None
+    bold_paths = [
+        "C:/Windows/Fonts/malgunbd.ttf",
+        "C:/Windows/Fonts/arialbd.ttf",
+    ]
+    for fp in bold_paths:
+        if os.path.exists(fp):
+            bold_font_file = fp
+            break
+
+    def _get_font(size_px, bold=False):
+        """크기별 폰트 반환"""
+        try:
+            path = bold_font_file if (bold and bold_font_file) else font_file
+            if path:
+                return ImageFont.truetype(path, size_px)
+        except Exception:
+            pass
+        return ImageFont.load_default()
+
+    def _draw_wrapped_text(draw, x, y, text, font, fill, max_width, line_height):
+        """줄바꿈 처리하여 텍스트 그리기, 최종 y 위치 반환"""
+        current_line = ""
+        for char in text:
+            test = current_line + char
+            bbox = draw.textbbox((0, 0), test, font=font)
+            if bbox[2] - bbox[0] > max_width:
+                if current_line:
+                    draw.text((x, y), current_line, fill=fill, font=font)
+                    y += line_height
+                current_line = char
+            else:
+                current_line = test
+        if current_line:
+            draw.text((x, y), current_line, fill=fill, font=font)
+            y += line_height
+        return y
+
+    # PPT 슬라이드 크기 (EMU → 비율 계산용)
+    slide_w = prs.slide_width or 12192000
+    slide_h = prs.slide_height or 6858000
+    img_w, img_h = 1280, 720
+    scale_x = img_w / slide_w
+    scale_y = img_h / slide_h
 
     for idx, slide in enumerate(prs.slides):
-        img = Image.new("RGB", (1280, 720), (15, 15, 25))
+        img = Image.new("RGB", (img_w, img_h), (15, 15, 25))
         draw = ImageDraw.Draw(img)
 
-        y_pos = 40
+        # 슬라이드 번호 표시 (우측 하단)
+        num_font = _get_font(12)
+        draw.text((img_w - 60, img_h - 30), f"{idx + 1}/{len(prs.slides)}",
+                  fill=(80, 80, 100), font=num_font)
+
         for shape in slide.shapes:
-            if shape.has_text_frame:
-                for paragraph in shape.text_frame.paragraphs:
-                    text = paragraph.text.strip()
-                    if not text:
-                        continue
+            if not shape.has_text_frame:
+                continue
 
-                    # 텍스트 줄바꿈 처리
-                    used_font = font if font else ImageFont.load_default()
-                    words = list(text)
-                    current_line = ""
-                    for char in words:
-                        test = current_line + char
-                        bbox = draw.textbbox((0, 0), test, font=used_font)
-                        if bbox[2] - bbox[0] > 1200:
-                            draw.text((40, y_pos), current_line, fill=(220, 220, 230), font=used_font)
-                            y_pos += 32
-                            current_line = char
-                        else:
-                            current_line = test
-                    if current_line:
-                        draw.text((40, y_pos), current_line, fill=(220, 220, 230), font=used_font)
-                        y_pos += 32
+            # shape 위치를 이미지 좌표로 변환
+            sx = int(shape.left * scale_x) if shape.left else 40
+            sy = int(shape.top * scale_y) if shape.top else 40
+            sw = int(shape.width * scale_x) if shape.width else (img_w - 80)
 
+            y_pos = sy
+            for paragraph in shape.text_frame.paragraphs:
+                text = paragraph.text.strip()
+                if not text:
                     y_pos += 8
+                    continue
+
+                # 폰트 크기/색상/볼드 읽기
+                font_size_pt = 18
+                is_bold = False
+                text_color = (220, 220, 230)
+
+                # paragraph 레벨 폰트 정보
+                if paragraph.font and paragraph.font.size:
+                    font_size_pt = int(paragraph.font.size / 12700)  # EMU → pt
+                if paragraph.font and paragraph.font.bold:
+                    is_bold = True
+                if paragraph.font and paragraph.font.color and paragraph.font.color.rgb:
+                    c = paragraph.font.color.rgb
+                    text_color = (c[0], c[1], c[2]) if hasattr(c, '__getitem__') else (220, 220, 230)
+
+                # run 레벨 폰트 정보 (더 정확)
+                if paragraph.runs:
+                    run = paragraph.runs[0]
+                    if run.font.size:
+                        font_size_pt = int(run.font.size / 12700)
+                    if run.font.bold:
+                        is_bold = True
+                    if run.font.color and run.font.color.rgb:
+                        try:
+                            c = run.font.color.rgb
+                            text_color = (int(str(c)[0:2], 16), int(str(c)[2:4], 16), int(str(c)[4:6], 16))
+                        except Exception:
+                            pass
+
+                # pt → 픽셀 변환 (화면 표시용)
+                font_size_px = max(int(font_size_pt * 1.5), 14)
+                line_height = font_size_px + 6
+                used_font = _get_font(font_size_px, is_bold)
+
+                y_pos = _draw_wrapped_text(
+                    draw, sx, y_pos, text, used_font, text_color,
+                    max_width=sw, line_height=line_height
+                )
+                y_pos += 4
 
         img_path = os.path.join(output_dir, f"slide_{idx:03d}.png")
         img.save(img_path)
         images.append(img_path)
+        print(f"  [슬라이드 {idx+1}/{len(prs.slides)}] 이미지 생성: {img_path}")
 
+    print(f"[변환] 총 {len(images)}개 슬라이드 이미지 생성 완료")
     return images
 
 
