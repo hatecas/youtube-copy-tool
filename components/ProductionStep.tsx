@@ -63,8 +63,10 @@ export default function ProductionStep({
     if (isProducing) setHasStarted(true);
   }, [isProducing]);
 
-  const allDone = assets?.thumbnailUrl && assets?.pptUrl && assets?.ttsUrl;
-  const videoDone = assets?.videoUrl;
+  const videoDone = !!assets?.videoUrl;
+  const allDone = !!(assets?.thumbnailUrl && assets?.pptUrl && assets?.ttsUrl && assets?.videoUrl);
+  const hasError = hasStarted && !isProducing && !allDone;
+  const partialDone = !!(assets?.thumbnailUrl || assets?.pptUrl || assets?.ttsUrl) && !allDone;
 
   const steps = [
     {
@@ -119,10 +121,18 @@ export default function ProductionStep({
           콘텐츠 제작
         </div>
         <h2 className="text-3xl font-bold mb-3 tracking-tight">
-          {isProducing ? "제작 중입니다..." : allDone ? "제작 완료!" : "제작을 시작하세요"}
+          {isProducing
+            ? "제작 중입니다..."
+            : allDone
+            ? "제작 완료!"
+            : hasError
+            ? "일부 제작에 실패했습니다"
+            : "제작을 시작하세요"}
         </h2>
         <p className="text-text-secondary max-w-lg mx-auto">
-          확정된 콘텐츠를 바탕으로 썸네일, PPT, TTS, 영상을 자동 생성합니다
+          {hasError
+            ? "실패한 항목을 확인하고 다시 시도해주세요"
+            : "확정된 콘텐츠를 바탕으로 썸네일, PPT, TTS, 영상을 자동 생성합니다"}
         </p>
       </div>
 
@@ -221,6 +231,11 @@ export default function ProductionStep({
             <button onClick={onNext} className="btn-primary flex items-center gap-2">
               업로드로 이동
               <ArrowRight size={14} />
+            </button>
+          ) : hasError ? (
+            <button onClick={handleStart} className="btn-primary flex items-center gap-2 bg-red-500 hover:bg-red-600 border-red-500">
+              <AlertCircle size={14} />
+              다시 제작하기
             </button>
           ) : (
             <button disabled className="btn-primary opacity-50 cursor-not-allowed flex items-center gap-2">

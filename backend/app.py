@@ -768,10 +768,48 @@ def generate_tts(script: dict, project_id: str) -> str:
     return filename
 
 
+def _find_ffmpeg() -> str:
+    """사용 가능한 ffmpeg 경로 반환 (시스템 → imageio_ffmpeg 순)"""
+    # 1) 시스템 ffmpeg
+    if shutil.which("ffmpeg"):
+        return "ffmpeg"
+    # 2) imageio_ffmpeg 번들
+    try:
+        import imageio_ffmpeg
+        path = imageio_ffmpeg.get_ffmpeg_exe()
+        if path:
+            return path
+    except Exception:
+        pass
+    raise FileNotFoundError("ffmpeg를 찾을 수 없습니다. 시스템에 ffmpeg를 설치하거나 pip install imageio-ffmpeg를 실행하세요.")
+
+
+def _find_ffprobe() -> str:
+    """사용 가능한 ffprobe 경로 반환"""
+    if shutil.which("ffprobe"):
+        return "ffprobe"
+    # imageio_ffmpeg 번들 ffmpeg와 같은 디렉토리에 ffprobe가 있을 수 있음
+    try:
+        import imageio_ffmpeg
+        ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
+        if ffmpeg_path:
+            ffprobe_path = ffmpeg_path.replace("ffmpeg", "ffprobe")
+            if os.path.exists(ffprobe_path):
+                return ffprobe_path
+            # ffprobe가 없으면 ffmpeg -i로 대체할 수 있도록 None 반환
+    except Exception:
+        pass
+    return ""
+
+
 def generate_video(project_id: str, ppt_filename: str, tts_filename: str) -> str:
     """FFmpeg로 PPT 슬라이드 + TTS 음성 → 영상 합성"""
     ppt_path = ASSETS_DIR / ppt_filename
     tts_path = ASSETS_DIR / tts_filename
+
+    # ffmpeg 경로 확인
+    ffmpeg_bin = _find_ffmpeg()
+    print(f"[영상] ffmpeg 경로: {ffmpeg_bin}")
 
     # 임시 디렉토리에 슬라이드를 이미지로 변환
     slides_dir = ASSETS_DIR / f"slides_{project_id}"
@@ -784,7 +822,7 @@ def generate_video(project_id: str, ppt_filename: str, tts_filename: str) -> str
         if not slide_images:
             raise Exception("슬라이드 이미지 변환 실패")
 
-        # TTS 오디오 길이 측정 (ffprobe)
+        # TTS 오디오 길이 측정
         audio_duration = _get_audio_duration(str(tts_path))
         if audio_duration <= 0:
             audio_duration = 60  # 기본값
@@ -792,6 +830,8 @@ def generate_video(project_id: str, ppt_filename: str, tts_filename: str) -> str
         # 슬라이드당 표시 시간 계산
         slide_duration = audio_duration / len(slide_images)
         slide_duration = max(slide_duration, 3)  # 최소 3초
+
+        print(f"[영상] 슬라이드 {len(slide_images)}개, 오디오 {audio_duration:.1f}초, 슬라이드당 {slide_duration:.1f}초")
 
         # FFmpeg로 영상 합성
         video_filename = f"video_{project_id}.mp4"
@@ -811,7 +851,7 @@ def generate_video(project_id: str, ppt_filename: str, tts_filename: str) -> str
 
         # FFmpeg 실행
         cmd = [
-            "ffmpeg", "-y",
+            ffmpeg_bin, "-y",
             "-f", "concat", "-safe", "0", "-i", str(concat_file),
             "-i", str(tts_path),
             "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:color=black",
@@ -1008,15 +1048,46 @@ def _ppt_to_images(ppt_path: str, output_dir: str) -> list[str]:
 
 def _get_audio_duration(audio_path: str) -> float:
     """오디오 파일의 길이(초) 반환"""
+    # 방법 1: ffprobe 사용
+    ffprobe_bin = _find_ffprobe()
+    if ffprobe_bin:
+        try:
+            result = subprocess.run(
+                [ffprobe_bin, "-v", "quiet", "-show_entries", "format=duration",
+                 "-of", "default=noprint_wrappers=1:nokey=1", audio_path],
+                capture_output=True, text=True, timeout=30
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return float(result.stdout.strip())
+        except Exception:
+            pass
+
+    # 방법 2: ffmpeg -i로 duration 추출
     try:
+        ffmpeg_bin = _find_ffmpeg()
         result = subprocess.run(
-            ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
-             "-of", "default=noprint_wrappers=1:nokey=1", audio_path],
+            [ffmpeg_bin, "-i", audio_path, "-f", "null", "-"],
             capture_output=True, text=True, timeout=30
         )
-        return float(result.stdout.strip())
+        # stderr에서 Duration: HH:MM:SS.xx 추출
+        import re
+        match = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.\d+)", result.stderr)
+        if match:
+            h, m, s = float(match.group(1)), float(match.group(2)), float(match.group(3))
+            return h * 3600 + m * 60 + s
     except Exception:
-        return 0
+        pass
+
+    # 방법 3: mutagen 라이브러리
+    try:
+        from mutagen.mp3 import MP3
+        audio = MP3(audio_path)
+        return audio.info.length
+    except Exception:
+        pass
+
+    print(f"[경고] 오디오 길이를 알 수 없음: {audio_path}")
+    return 0
 
 
 # ============================================================
