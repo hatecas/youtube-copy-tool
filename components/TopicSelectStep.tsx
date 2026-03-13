@@ -6,6 +6,7 @@ import {
   Users,
   Sparkles,
   ArrowRight,
+  ArrowLeft,
   RefreshCw,
   Eye,
   ChevronDown,
@@ -23,6 +24,7 @@ interface TopicSelectStepProps {
   onSelectTopic: (topic: TopicSuggestion) => void;
   onRetry: () => void;
   isRetrying?: boolean;
+  onBack?: () => void;
 }
 
 export default function TopicSelectStep({
@@ -31,6 +33,7 @@ export default function TopicSelectStep({
   onSelectTopic,
   onRetry,
   isRetrying,
+  onBack,
 }: TopicSelectStepProps) {
   const [showVideos, setShowVideos] = useState(true); // 기본 펼침
   const [hoveredTopic, setHoveredTopic] = useState<string | null>(null);
@@ -223,12 +226,21 @@ export default function TopicSelectStep({
         ))}
       </div>
 
-      {/* 재시도 */}
-      <div className="max-w-3xl mx-auto text-center">
+      {/* 하단 버튼 */}
+      <div className="max-w-3xl mx-auto flex items-center justify-between pt-2">
+        {onBack && (
+          <button
+            onClick={onBack}
+            className="btn-secondary flex items-center gap-2 text-sm"
+          >
+            <ArrowLeft size={14} />
+            영상 다시 입력
+          </button>
+        )}
         <button
           onClick={onRetry}
           disabled={isRetrying}
-          className="btn-secondary inline-flex items-center gap-2 text-sm disabled:opacity-50"
+          className="btn-secondary inline-flex items-center gap-2 text-sm disabled:opacity-50 ml-auto"
         >
           {isRetrying ? (
             <Loader2 size={14} className="animate-spin" />

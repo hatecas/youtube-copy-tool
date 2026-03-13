@@ -104,6 +104,54 @@ export default function Home() {
     }
   }, []);
 
+  // 브라우저 뒤로가기 버튼 지원: step 변경 시 history에 push
+  const stepOrder: AppStep[] = ["input", "analyzing", "topics", "generating", "result", "confirm", "producing", "production", "upload"];
+  const prevStepMap: Record<AppStep, AppStep | null> = {
+    input: null,
+    analyzing: "input",
+    topics: "input",
+    generating: "topics",
+    result: "topics",
+    confirm: "result",
+    producing: "confirm",
+    production: "confirm",
+    upload: "production",
+  };
+
+  useEffect(() => {
+    // step 변경 시 history에 push (뒤로가기 가능하게)
+    const currentState = history.state;
+    if (!currentState || currentState.step !== currentStep) {
+      history.pushState({ step: currentStep }, "", "");
+    }
+  }, [currentStep]);
+
+  useEffect(() => {
+    const handlePopState = (e: PopStateEvent) => {
+      // 브라우저 뒤로가기 시 이전 단계로 이동
+      if (e.state && e.state.step) {
+        // history에 저장된 step으로 복원
+        setCurrentStep(e.state.step);
+      } else {
+        // history state가 없으면 현재 step의 이전 단계로
+        const prev = prevStepMap[currentStep];
+        if (prev) {
+          setCurrentStep(prev);
+          history.pushState({ step: prev }, "", "");
+        }
+      }
+    };
+
+    window.addEventListener("popstate", handlePopState);
+
+    // 초기 state 설정
+    if (!history.state || !history.state.step) {
+      history.replaceState({ step: currentStep }, "", "");
+    }
+
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [currentStep]);
+
   if (!accessGranted) {
     return <AccessGate onGranted={() => setAccessGranted(true)} />;
   }
@@ -286,6 +334,7 @@ export default function Home() {
             onSelectTopic={handleSelectTopic}
             onRetry={handleRetryTopics}
             isRetrying={isRetrying}
+            onBack={() => setCurrentStep("input")}
           />
         )}
 
