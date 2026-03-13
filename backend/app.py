@@ -1008,9 +1008,12 @@ def _ppt_to_images(ppt_path: str, output_dir: str) -> list[str]:
                     font_size_pt = int(paragraph.font.size / 12700)  # EMU → pt
                 if paragraph.font and paragraph.font.bold:
                     is_bold = True
-                if paragraph.font and paragraph.font.color and paragraph.font.color.rgb:
-                    c = paragraph.font.color.rgb
-                    text_color = (c[0], c[1], c[2]) if hasattr(c, '__getitem__') else (220, 220, 230)
+                try:
+                    if paragraph.font and paragraph.font.color and paragraph.font.color.type is not None:
+                        c = paragraph.font.color.rgb
+                        text_color = (c[0], c[1], c[2]) if hasattr(c, '__getitem__') else (220, 220, 230)
+                except Exception:
+                    pass
 
                 # run 레벨 폰트 정보 (더 정확)
                 if paragraph.runs:
@@ -1019,12 +1022,12 @@ def _ppt_to_images(ppt_path: str, output_dir: str) -> list[str]:
                         font_size_pt = int(run.font.size / 12700)
                     if run.font.bold:
                         is_bold = True
-                    if run.font.color and run.font.color.rgb:
-                        try:
+                    try:
+                        if run.font.color and run.font.color.type is not None:
                             c = run.font.color.rgb
                             text_color = (int(str(c)[0:2], 16), int(str(c)[2:4], 16), int(str(c)[4:6], 16))
-                        except Exception:
-                            pass
+                    except Exception:
+                        pass
 
                 # pt → 픽셀 변환 (화면 표시용)
                 font_size_px = max(int(font_size_pt * 1.5), 14)
