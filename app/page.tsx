@@ -319,6 +319,7 @@ export default function Home() {
             onStartProduction={handleStartProduction}
             onNext={() => setCurrentStep("upload")}
             onBack={() => setCurrentStep("confirm")}
+            backendUrl={process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000"}
           />
         )}
 
@@ -329,6 +330,7 @@ export default function Home() {
             onUpload={handleUpload}
             onBack={() => setCurrentStep("production")}
             onReset={handleReset}
+            backendUrl={process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000"}
           />
         )}
       </main>
