@@ -104,8 +104,9 @@ export default function Home() {
     }
   }, []);
 
-  // 브라우저 뒤로가기 버튼 지원: step 변경 시 history에 push
-  const stepOrder: AppStep[] = ["input", "analyzing", "topics", "generating", "result", "confirm", "producing", "production", "upload"];
+  // 브라우저 뒤로가기 버튼 지원
+  // 로딩/과도 상태는 history에 넣지 않음 (뒤로가기 시 로딩 화면에 갇히는 것 방지)
+  const transientSteps: Set<AppStep> = new Set(["analyzing", "generating", "producing"]);
   const prevStepMap: Record<AppStep, AppStep | null> = {
     input: null,
     analyzing: "input",
@@ -119,7 +120,9 @@ export default function Home() {
   };
 
   useEffect(() => {
-    // step 변경 시 history에 push (뒤로가기 가능하게)
+    // 과도 상태는 history에 push하지 않음
+    if (transientSteps.has(currentStep)) return;
+
     const currentState = history.state;
     if (!currentState || currentState.step !== currentStep) {
       history.pushState({ step: currentStep }, "", "");
@@ -128,16 +131,20 @@ export default function Home() {
 
   useEffect(() => {
     const handlePopState = (e: PopStateEvent) => {
-      // 브라우저 뒤로가기 시 이전 단계로 이동
       if (e.state && e.state.step) {
-        // history에 저장된 step으로 복원
-        setCurrentStep(e.state.step);
+        const step = e.state.step as AppStep;
+        // 만약 과도 상태라면 그 이전 단계로 이동
+        if (transientSteps.has(step)) {
+          const safe = prevStepMap[step];
+          if (safe) setCurrentStep(safe);
+        } else {
+          setCurrentStep(step);
+        }
       } else {
         // history state가 없으면 현재 step의 이전 단계로
         const prev = prevStepMap[currentStep];
         if (prev) {
           setCurrentStep(prev);
-          history.pushState({ step: prev }, "", "");
         }
       }
     };

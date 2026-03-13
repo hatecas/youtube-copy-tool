@@ -66,7 +66,6 @@ export default function ProductionStep({
   const videoDone = !!assets?.videoUrl;
   const allDone = !!(assets?.thumbnailUrl && assets?.pptUrl && assets?.ttsUrl && assets?.videoUrl);
   const hasError = hasStarted && !isProducing && !allDone;
-  const partialDone = !!(assets?.thumbnailUrl || assets?.pptUrl || assets?.ttsUrl) && !allDone;
 
   const steps = [
     {
