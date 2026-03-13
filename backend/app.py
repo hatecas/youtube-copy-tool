@@ -799,12 +799,15 @@ def generate_video(project_id: str, ppt_filename: str, tts_filename: str) -> str
 
         # 슬라이드 리스트 파일 생성
         concat_file = slides_dir / "concat.txt"
-        with open(concat_file, "w") as f:
+        with open(concat_file, "w", encoding="utf-8") as f:
             for img_path in slide_images:
-                f.write(f"file '{img_path}'\n")
+                # Windows 백슬래시를 슬래시로 변환 (FFmpeg 호환)
+                safe_path = img_path.replace("\\", "/")
+                f.write(f"file '{safe_path}'\n")
                 f.write(f"duration {slide_duration}\n")
             # 마지막 이미지 반복 (FFmpeg concat 요구사항)
-            f.write(f"file '{slide_images[-1]}'\n")
+            safe_last = slide_images[-1].replace("\\", "/")
+            f.write(f"file '{safe_last}'\n")
 
         # FFmpeg 실행
         cmd = [
@@ -819,12 +822,18 @@ def generate_video(project_id: str, ppt_filename: str, tts_filename: str) -> str
             str(video_path),
         ]
 
+        print(f"[FFmpeg 명령] {' '.join(cmd)}")
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         if result.returncode != 0:
-            print(f"[FFmpeg 오류] {result.stderr[:500]}")
+            print(f"[FFmpeg 오류] returncode={result.returncode}")
+            print(f"[FFmpeg stderr] {result.stderr[:1000]}")
             raise Exception(f"FFmpeg 오류: {result.stderr[:200]}")
 
-        print(f"[영상] 생성 완료: {video_path}")
+        # 파일 크기 확인 (0바이트면 실패)
+        if not video_path.exists() or video_path.stat().st_size == 0:
+            raise Exception("영상 파일이 생성되지 않았거나 크기가 0입니다")
+
+        print(f"[영상] 생성 완료: {video_path} ({video_path.stat().st_size / 1024:.1f}KB)")
         return video_filename
 
     finally:
@@ -858,9 +867,17 @@ def _ppt_to_images(ppt_path: str, output_dir: str) -> list[str]:
 
     font = None
     font_paths = [
+        # Windows 한국어 폰트
+        "C:/Windows/Fonts/malgun.ttf",      # 맑은 고딕
+        "C:/Windows/Fonts/gulim.ttc",       # 굴림
+        "C:/Windows/Fonts/batang.ttc",      # 바탕
+        "C:/Windows/Fonts/arial.ttf",       # Arial (폴백)
+        # Linux 폰트
         "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        # macOS 폰트
+        "/System/Library/Fonts/AppleSDGothicNeo.ttc",
     ]
     for fp in font_paths:
         if os.path.exists(fp):
@@ -1493,7 +1510,16 @@ def serve_asset(filename):
     if not filepath.exists():
         return jsonify({"error": "파일을 찾을 수 없습니다"}), 404
 
-    return send_file(str(filepath))
+    # MP4 영상은 명시적 MIME type 지정 (브라우저 재생 호환성)
+    mimetype = None
+    if safe_name.endswith(".mp4"):
+        mimetype = "video/mp4"
+    elif safe_name.endswith(".mp3"):
+        mimetype = "audio/mpeg"
+    elif safe_name.endswith(".pptx"):
+        mimetype = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+
+    return send_file(str(filepath), mimetype=mimetype)
 
 
 @app.route("/api/upload-youtube", methods=["POST"])
